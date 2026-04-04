@@ -1,0 +1,8 @@
+.env
+soundcloud.cookies
+archive.txt
+failed.txt
+__pycache__/
+*.pyc
+.DS_Store
+venv/
