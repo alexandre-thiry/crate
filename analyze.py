@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Crate — analyze.py
-Scans ~/Desktop/Music/_staging/ for MP3s, computes RMS energy (0-100)
-and BPM via LibROSA, and writes analysis.csv to the project root.
+Scans ~/Desktop/Music/_staging/ for MP3s, computes a composite energy score
+(0–100) from RMS loudness, spectral brightness, and percussive content, then
+writes analysis.csv to the project root sorted by energy descending.
 """
 
 import csv
@@ -16,10 +17,15 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 STAGING_DIR = os.path.expanduser("~/Desktop/Music/_staging/")
 OUTPUT_CSV  = os.path.join(PROJECT_DIR, "analysis.csv")
 
+# --- Energy formula weights ---
+W_RMS        = 0.4   # raw loudness
+W_CENTROID   = 0.3   # spectral brightness (high = brighter/harsher)
+W_PERCUSSIVE = 0.3   # percussive vs harmonic content ratio
+
 
 def normalize_energy(raw_values):
     """
-    Normalize a list of raw RMS floats to 0–100 relative to the maximum.
+    Normalize a list of raw floats to 0–100 relative to the maximum.
     Returns a list of floats in the same order as the input.
     """
     if not raw_values:
@@ -32,20 +38,22 @@ def normalize_energy(raw_values):
 
 def analyze_track(filepath):
     """
-    Load an MP3 and return (raw_rms, bpm).
-    raw_rms is the mean RMS energy as a float.
-    bpm is rounded to 1 decimal place.
-    Returns (None, None) on error.
+    Load an audio file and return (rms, centroid, percussive_ratio).
+    - rms: mean RMS energy (raw float)
+    - centroid: mean spectral centroid in Hz
+    - percussive_ratio: mean RMS of percussive layer / mean RMS of full signal
+    Returns (None, None, None) on error.
     """
     try:
         y, sr = librosa.load(filepath, mono=True)
         rms = float(np.mean(librosa.feature.rms(y=y)))
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = round(float(np.atleast_1d(tempo)[0]), 1)
-        return rms, bpm
+        centroid = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
+        _, y_percussive = librosa.effects.hpss(y)
+        percussive_ratio = float(np.mean(librosa.feature.rms(y=y_percussive))) / (rms + 1e-6)
+        return rms, centroid, percussive_ratio
     except Exception as e:
         print(f"  WARNING: could not analyze {os.path.basename(filepath)}: {e}")
-        return None, None
+        return None, None, None
 
 
 def main():
@@ -62,29 +70,35 @@ def main():
     results = []
     for i, filename in enumerate(mp3_files, 1):
         filepath = os.path.join(STAGING_DIR, filename)
-        raw_rms, bpm = analyze_track(filepath)
-        if raw_rms is None:
+        rms, centroid, percussive_ratio = analyze_track(filepath)
+        if rms is None:
             continue
-        results.append({"filename": filename, "raw_rms": raw_rms, "bpm": bpm})
-        print(f"[{i}/{len(mp3_files)}] {filename}  →  bpm={bpm}")
+        results.append({
+            "filename": filename,
+            "raw_rms": rms,
+            "raw_centroid": centroid,
+            "raw_percussive": percussive_ratio,
+        })
+        print(f"[{i}/{len(mp3_files)}] {filename}")
 
     if not results:
         print("No tracks could be analyzed.")
         return
 
-    raw_values = [r["raw_rms"] for r in results]
-    normalized = normalize_energy(raw_values)
+    norm_rms        = normalize_energy([r["raw_rms"]        for r in results])
+    norm_centroid   = normalize_energy([r["raw_centroid"]   for r in results])
+    norm_percussive = normalize_energy([r["raw_percussive"] for r in results])
 
-    for r, energy in zip(results, normalized):
-        r["energy"] = energy
+    for r, n_rms, n_cent, n_perc in zip(results, norm_rms, norm_centroid, norm_percussive):
+        r["energy"] = round(W_RMS * n_rms + W_CENTROID * n_cent + W_PERCUSSIVE * n_perc, 1)
 
     results.sort(key=lambda r: r["energy"], reverse=True)
 
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["filename", "energy", "bpm"])
+        writer = csv.DictWriter(f, fieldnames=["filename", "energy"])
         writer.writeheader()
         for r in results:
-            writer.writerow({"filename": r["filename"], "energy": r["energy"], "bpm": r["bpm"]})
+            writer.writerow({"filename": r["filename"], "energy": r["energy"]})
 
     print(f"\nDone. Results written to {OUTPUT_CSV}")
 
