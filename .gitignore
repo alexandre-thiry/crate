@@ -2,6 +2,7 @@
 soundcloud.cookies
 archive.txt
 failed.txt
+sources.txt
 __pycache__/
 *.pyc
 .cache
@@ -9,3 +10,5 @@ __pycache__/
 venv/
 .claude
 CLAUDE.md
+docs/
+analysis.csv

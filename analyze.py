@@ -41,7 +41,7 @@ def analyze_track(filepath):
         y, sr = librosa.load(filepath, mono=True)
         rms = float(np.mean(librosa.feature.rms(y=y)))
         tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = round(float(tempo), 1)
+        bpm = round(float(np.atleast_1d(tempo)[0]), 1)
         return rms, bpm
     except Exception as e:
         print(f"  WARNING: could not analyze {os.path.basename(filepath)}: {e}")
