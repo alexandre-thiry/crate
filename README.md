@@ -1,18 +1,24 @@
 # Crate
 
-Automatically sync and download your Spotify and SoundCloud playlists as high-quality MP3s, tagged and ready to import into rekordbox. Includes an energy analysis tool to help sort tracks into DJ playlists.
+Automatically sync and download your Spotify and SoundCloud playlists as high-quality MP3s, tagged and ready to import into rekordbox. Includes energy analysis, playlist sorting, and file renaming tools.
 
 ---
 
 ## What It Does
 
-Crate is two tools in one:
+Crate is four tools in one:
 
 **`sync.py` — Download your music**
 Pulls your master playlists from Spotify and SoundCloud, merges them into one deduplicated list, and downloads every track you don't already have — in the best quality available. Files land in a staging folder, named and tagged correctly, ready for rekordbox.
 
 **`analyze.py` — Score your tracks by energy**
-Scans your staging folder and gives every track a composite energy score (0–100) based on three audio characteristics: loudness, brightness, and how percussive it sounds. Outputs a CSV you can use to sort tracks into warm-up, peak, and closing playlists.
+Scans your staging folder and gives every track a composite energy score (0–100) based on three audio characteristics: loudness, brightness, and how percussive it sounds. Already-analyzed tracks are cached so only new tracks are processed on subsequent runs.
+
+**`sort.py` — Sort into playlists**
+Reads the energy scores and automatically moves tracks from staging into `peak`, `warm up`, and `closing` folders based on configurable thresholds.
+
+**`rename.py` — Fix file naming**
+Renames any audio file to the correct `Track Name - Artist.ext` convention by reading its ID3 tags. Useful for tracks added manually outside the pipeline. Dry-run by default.
 
 ---
 
@@ -64,6 +70,9 @@ You need to be logged in to SoundCloud Go+ in your browser, then export your coo
 ```bash
 mkdir -p ~/Desktop/Music/_staging
 mkdir -p ~/Desktop/Music/Unsorted
+mkdir -p ~/Desktop/Music/house/peak
+mkdir -p ~/Desktop/Music/house/"warm up"
+mkdir -p ~/Desktop/Music/house/closing
 ```
 
 ---
@@ -177,13 +186,13 @@ All three are computed locally using [librosa](https://librosa.org/) — no inte
 
 Open `analysis.csv` in Excel, Numbers, or any spreadsheet app. You'll see two columns: filename and energy score. Use it as a starting point to sort tracks into playlists — the scores give you a data-driven first pass, but trust your ears for the final call.
 
-Suggested thresholds (adjust based on your library):
+Default thresholds (configurable at the top of `sort.py`):
 
 | Playlist | Energy range |
 |----------|-------------|
-| Peak hour | 75+ |
-| Warm up / build | 55–74 |
-| Closing / cool down | below 55 |
+| Peak | 70+ |
+| Warm up | 59–69 |
+| Closing | below 59 |
 
 ---
 
@@ -245,12 +254,32 @@ SC_RETRY_WAITS        = [10, 30, 60]  # backoff sequence on rate limit errors
 
 ---
 
+## Fixing File Naming
+
+If you add tracks manually that don't follow the `Track Name - Artist.ext` convention, `rename.py` will fix them using the ID3 tags embedded in each file.
+
+**Preview what would change (no files touched):**
+```bash
+venv/bin/python rename.py
+```
+
+**Apply the renames:**
+```bash
+venv/bin/python rename.py --apply
+```
+
+Tracks downloaded through `sync.py` are always named correctly — this is only needed for manually added files.
+
+---
+
 ## Project Structure
 
 ```
 crate/
 ├── sync.py              # Download script — run this to sync music
-├── analyze.py           # Energy analysis — run this to score your tracks
+├── analyze.py           # Energy analysis — scores tracks, caches results
+├── sort.py              # Sorts tracks into peak / warm up / closing folders
+├── rename.py            # Fixes file naming using ID3 tags
 ├── requirements.txt     # Python dependencies
 ├── tests/
 │   └── test_analyze.py  # Unit tests for analyze.py
