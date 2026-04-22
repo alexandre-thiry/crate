@@ -12,3 +12,4 @@ venv/
 CLAUDE.md
 docs/
 analysis.csv
+sort_overrides.txt
