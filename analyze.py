@@ -87,7 +87,8 @@ def analyze_track(filepath):
 
 def main():
     mp3_files = sorted([
-        f for f in os.listdir(STAGING_DIR) if f.lower().endswith(".mp3")
+        f for f in os.listdir(STAGING_DIR)
+        if f.lower().endswith(".mp3") or f.lower().endswith(".wav")
     ])
 
     if not mp3_files:
