@@ -341,19 +341,19 @@ def try_download(query, intended_track, expected_duration=None, use_cookies=Fals
         if "entries" in info:
             entries = [e for e in info["entries"] if e]
             if not entries:
-                return None
+                return None, hit_429
             result = entries[0]
             # If the entry is a bare URL reference with no title, resolve it
             if not result.get("title") and result.get("url"):
                 try:
                     result = ydl.extract_info(result["url"], download=False)
                 except Exception:
-                    return None
+                    return None, hit_429
         else:
             result = info
 
         if not result or not result.get("title"):
-            return None
+            return None, hit_429
 
         # Step 2: Verify the result matches the intended track
         returned_title    = result.get("title", "")
