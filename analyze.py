@@ -4,6 +4,9 @@ Crate — analyze.py
 Scans ~/Desktop/Music/_staging/ for MP3s, computes a composite energy score
 (0–100) from RMS loudness, spectral brightness, and percussive content, then
 writes analysis.csv to the project root sorted by energy descending.
+
+analysis.csv doubles as a cache: raw values for already-analyzed tracks are
+loaded at startup so only new tracks need to be processed.
 """
 
 import csv
@@ -22,6 +25,9 @@ W_RMS        = 0.4   # raw loudness
 W_CENTROID   = 0.3   # spectral brightness (high = brighter/harsher)
 W_PERCUSSIVE = 0.3   # percussive vs harmonic content ratio
 
+# --- CSV columns ---
+FIELDNAMES = ["filename", "energy", "raw_rms", "raw_centroid", "raw_percussive"]
+
 
 def normalize_energy(raw_values):
     """
@@ -34,6 +40,29 @@ def normalize_energy(raw_values):
     if max_val == 0:
         return [0.0] * len(raw_values)
     return [round((v / max_val) * 100, 1) for v in raw_values]
+
+
+def load_cache():
+    """
+    Load raw values from an existing analysis.csv.
+    Returns a dict of {filename: {raw_rms, raw_centroid, raw_percussive}}.
+    """
+    cache = {}
+    if not os.path.exists(OUTPUT_CSV):
+        return cache
+    with open(OUTPUT_CSV, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                cache[row["filename"]] = {
+                    "raw_rms":        float(row["raw_rms"]),
+                    "raw_centroid":   float(row["raw_centroid"]),
+                    "raw_percussive": float(row["raw_percussive"]),
+                }
+            except (KeyError, ValueError):
+                # Old CSV format without raw columns — skip, will re-analyze
+                pass
+    return cache
 
 
 def analyze_track(filepath):
@@ -65,42 +94,59 @@ def main():
         print("No MP3 files found in _staging/. Nothing to analyze.")
         return
 
-    print(f"Analyzing {len(mp3_files)} tracks in {STAGING_DIR}\n")
+    cache = load_cache()
+    new_files = [f for f in mp3_files if f not in cache]
 
-    results = []
-    for i, filename in enumerate(mp3_files, 1):
+    print(f"Found {len(mp3_files)} tracks — {len(cache)} cached, {len(new_files)} new\n")
+
+    # Analyze only new tracks
+    for i, filename in enumerate(new_files, 1):
         filepath = os.path.join(STAGING_DIR, filename)
+        print(f"[{i}/{len(new_files)}] {filename}")
         rms, centroid, percussive_ratio = analyze_track(filepath)
         if rms is None:
             continue
-        results.append({
-            "filename": filename,
-            "raw_rms": rms,
-            "raw_centroid": centroid,
+        cache[filename] = {
+            "raw_rms":        rms,
+            "raw_centroid":   centroid,
             "raw_percussive": percussive_ratio,
-        })
-        print(f"[{i}/{len(mp3_files)}] {filename}")
+        }
 
-    if not results:
+    # Only keep entries for files still in _staging/ (handles deleted tracks)
+    active = {f: cache[f] for f in mp3_files if f in cache}
+
+    if not active:
         print("No tracks could be analyzed.")
         return
 
-    norm_rms        = normalize_energy([r["raw_rms"]        for r in results])
-    norm_centroid   = normalize_energy([r["raw_centroid"]   for r in results])
-    norm_percussive = normalize_energy([r["raw_percussive"] for r in results])
+    # Renormalize everything together so scores are always relative to the full library
+    filenames       = list(active.keys())
+    norm_rms        = normalize_energy([active[f]["raw_rms"]        for f in filenames])
+    norm_centroid   = normalize_energy([active[f]["raw_centroid"]   for f in filenames])
+    norm_percussive = normalize_energy([active[f]["raw_percussive"] for f in filenames])
 
-    for r, n_rms, n_cent, n_perc in zip(results, norm_rms, norm_centroid, norm_percussive):
-        r["energy"] = round(W_RMS * n_rms + W_CENTROID * n_cent + W_PERCUSSIVE * n_perc, 1)
+    results = []
+    for f, n_rms, n_cent, n_perc in zip(filenames, norm_rms, norm_centroid, norm_percussive):
+        energy = round(W_RMS * n_rms + W_CENTROID * n_cent + W_PERCUSSIVE * n_perc, 1)
+        results.append({
+            "filename":       f,
+            "energy":         energy,
+            "raw_rms":        active[f]["raw_rms"],
+            "raw_centroid":   active[f]["raw_centroid"],
+            "raw_percussive": active[f]["raw_percussive"],
+        })
 
     results.sort(key=lambda r: r["energy"], reverse=True)
 
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["filename", "energy"])
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         writer.writeheader()
         for r in results:
-            writer.writerow({"filename": r["filename"], "energy": r["energy"]})
+            writer.writerow(r)
 
-    print(f"\nDone. Results written to {OUTPUT_CSV}")
+    print(f"\nDone. {len(results)} tracks in {OUTPUT_CSV}")
+    if new_files:
+        print(f"  {len([f for f in new_files if f in active])} new tracks analyzed and added to cache.")
 
 
 if __name__ == "__main__":
