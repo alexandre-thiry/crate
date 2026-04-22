@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Crate — sort.py
-Reads analysis.csv and moves MP3s from ~/Desktop/Music/_staging/
+Reads analysis.csv and moves audio files (MP3, WAV) from ~/Desktop/Music/_staging/
 into ~/Desktop/Music/house/ subfolders based on energy score.
 
 Thresholds:
