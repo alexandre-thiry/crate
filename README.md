@@ -6,7 +6,7 @@ Automatically sync and download your Spotify and SoundCloud playlists as high-qu
 
 ## What It Does
 
-Crate is four tools in one:
+Crate is five tools in one:
 
 **`sync.py` — Download your music**
 Pulls your master playlists from Spotify and SoundCloud, merges them into one deduplicated list, and downloads every track you don't already have — in the best quality available. Files land in a staging folder, named and tagged correctly, ready for rekordbox.
@@ -19,6 +19,9 @@ Reads the energy scores and automatically moves tracks from staging into `peak`,
 
 **`rename.py` — Fix file naming**
 Renames any audio file to the correct `Track Name - Artist.ext` convention by reading its ID3 tags. Useful for tracks added manually outside the pipeline. Dry-run by default.
+
+**`run.py` — Run everything at once**
+Runs the full pipeline in one command: sync → analyze → sort. Pauses before moving files so you can review and edit the sort assignments first.
 
 ---
 
@@ -276,7 +279,8 @@ Tracks downloaded through `sync.py` are always named correctly — this is only 
 
 ```
 crate/
-├── sync.py              # Download script — run this to sync music
+├── run.py               # Run full pipeline in one command
+├── sync.py              # Download script
 ├── analyze.py           # Energy analysis — scores tracks, caches results
 ├── sort.py              # Sorts tracks into peak / warm up / closing folders
 ├── rename.py            # Fixes file naming using ID3 tags
