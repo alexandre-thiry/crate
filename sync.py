@@ -11,7 +11,7 @@ import sys
 import time
 
 from dotenv import load_dotenv
-from mutagen.id3 import ID3, TIT2, TPE1, TPE2, ID3NoHeaderError
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, ID3NoHeaderError, TALB
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import yt_dlp
@@ -265,6 +265,7 @@ def write_tags(filepath, artist, title):
         tags['TIT2'] = TIT2(encoding=3, text=title)
         tags['TPE1'] = TPE1(encoding=3, text=artist)
         tags['TPE2'] = TPE2(encoding=3, text=artist)
+        tags.delall('TALB')
         tags.save(filepath)
     except Exception as e:
         print(f"  WARNING: could not write tags: {e}")
