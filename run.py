@@ -55,7 +55,9 @@ def main():
             print("\nERROR: sort.py --apply failed.")
             sys.exit(1)
     else:
-        print("Sort skipped. Run 'venv/bin/python sort.py --apply' when ready.")
+        print("Sort skipped. Opening sort_overrides.txt for review...")
+        subprocess.run(["open", overrides_file])
+        print("Edit sort_overrides.txt, then run: crate sort --apply")
 
 
 if __name__ == "__main__":
