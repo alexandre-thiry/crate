@@ -1,12 +1,12 @@
 # Crate
 
-Automatically sync and download your Spotify and SoundCloud playlists as high-quality MP3s, tagged and ready to import into rekordbox. Includes energy analysis, playlist sorting, and file renaming tools.
+Automatically sync and download your Spotify and SoundCloud playlists as high-quality MP3s, tagged and ready to import into rekordbox. Includes energy analysis, playlist sorting, file renaming, dependency updates, and a built-in quick reference.
 
 ---
 
 ## What It Does
 
-Crate is five tools in one:
+Crate is seven tools in one:
 
 **`sync.py` — Download your music**
 Pulls your master playlists from Spotify and SoundCloud, merges them into one deduplicated list, and downloads every track you don't already have — in the best quality available. Files land in a staging folder, named and tagged correctly, ready for rekordbox.
@@ -21,7 +21,13 @@ Reads the energy scores and automatically moves tracks from staging into `peak`,
 Renames any audio file to the correct `Track Name - Artist.ext` convention by reading its ID3 tags. Useful for tracks added manually outside the pipeline. Dry-run by default.
 
 **`run.py` — Run everything at once**
-Runs the full pipeline in one command: sync → analyze → sort. Pauses before moving files so you can review and edit the sort assignments first.
+Runs the full pipeline in one command: sync → analyze → sort. Checks first whether yt-dlp is out of date and offers to update it. Pauses before moving files so you can review and edit the sort assignments first.
+
+**`update.py` — Keep dependencies current**
+Checks every package in `requirements.txt` against PyPI. yt-dlp is upgraded automatically (an outdated yt-dlp is the most common cause of download failures) and smoke-tested, with a rollback prompt if the test fails. Other packages are upgraded only if you say yes.
+
+**`help.py` — Quick reference**
+Prints an overview of every command followed by details: download fallback order, quality, DRM, rate limiting, and troubleshooting.
 
 ---
 
@@ -234,7 +240,7 @@ SoundCloud throttles bulk requests. Crate handles this automatically:
 - **Adaptive delay** — if SoundCloud returns a rate limit error at any point, the delay automatically increases to 10 seconds for all remaining tracks
 - **Automatic retry** — on a rate limit error, Crate waits 10s, then 30s, then 60s before giving up on SoundCloud and falling back to YouTube
 
-If you're consistently seeing many YouTube fallbacks on long runs, increase `TRACK_DELAY` at the top of `sync.py`.
+If you're consistently seeing many YouTube fallbacks on long runs, increase `TRACK_DELAY` at the top of `sync.py`. If every SoundCloud search is being rate limited (usually after back-to-back runs), stop the run, connect to a VPN to get a new IP, and rerun — or wait 30–60 minutes.
 
 ---
 
@@ -275,6 +281,30 @@ Tracks downloaded through `sync.py` are always named correctly — this is only 
 
 ---
 
+## Updating Dependencies
+
+```bash
+venv/bin/python update.py
+```
+
+- **yt-dlp** is upgraded automatically, then smoke-tested with one SoundCloud search and one YouTube download. If the test fails (even after one retry) you're asked whether to roll back.
+- **Other packages** are listed with their latest version and upgraded only if you confirm. Upgrading `librosa` may shift energy scores relative to the ones cached in `analysis.csv`.
+- `requirements.txt` is rewritten to match what's installed.
+
+`run.py` performs the yt-dlp check automatically before every sync. If you see `HTTP Error 403` from YouTube or `HTTP Error 404` from SoundCloud searches, an outdated yt-dlp is the likely cause.
+
+---
+
+## Quick Reference
+
+```bash
+venv/bin/python help.py
+```
+
+Prints a one-screen overview of every command, then details and a troubleshooting table.
+
+---
+
 ## Project Structure
 
 ```
@@ -284,9 +314,12 @@ crate/
 ├── analyze.py           # Energy analysis — scores tracks, caches results
 ├── sort.py              # Sorts tracks into peak / warm up / closing folders
 ├── rename.py            # Fixes file naming using ID3 tags
+├── update.py            # Checks/upgrades dependencies, smoke-tests yt-dlp
+├── help.py              # Prints the quick reference
 ├── requirements.txt     # Python dependencies
 ├── tests/
-│   └── test_analyze.py  # Unit tests for analyze.py
+│   ├── test_analyze.py  # Unit tests for analyze.py
+│   └── test_update.py   # Unit tests for update.py
 ├── .env                 # Credentials (never committed)
 ├── soundcloud.cookies   # SC session cookies (never committed)
 ├── archive.txt          # Downloaded track log (never committed)
