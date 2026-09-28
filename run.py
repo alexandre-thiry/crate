@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Crate — run.py
-Runs the full pipeline in order:
-  1. sync.py    — download new tracks
+Runs the full pipeline in order (after offering a yt-dlp update if one is out):
+  1. sync.py   — download new tracks
   2. analyze.py — score energy (only new tracks)
   3. sort.py    — preview sort, then optionally apply
 
@@ -13,6 +13,8 @@ Usage:
 import os
 import subprocess
 import sys
+
+from update import prompt_ytdlp_update
 
 PYTHON = sys.executable
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +31,7 @@ def run_step(label, script):
 
 
 def main():
+    prompt_ytdlp_update()
     run_step("Step 1 / 3 — Syncing new tracks", "sync.py")
     run_step("Step 2 / 3 — Analyzing energy", "analyze.py")
 
