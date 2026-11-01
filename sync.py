@@ -84,11 +84,11 @@ def get_spotify(config):
     return spotipy.Spotify(auth_manager=auth)
 
 
-def fetch_spotify_tracks(config):
+def fetch_spotify_tracks(config, playlist_id):
     # Any Spotify failure stops the run — continuing would silently skip every Spotify track
     try:
         sp = get_spotify(config)
-        results = sp.playlist_tracks(config["spotify_playlist_id"])
+        results = sp.playlist_tracks(playlist_id)
     except Exception as e:
         print(f"  ERROR: Spotify failed: {e}")
         print("  Stopping so Spotify tracks aren't silently skipped. See: crate help")
@@ -124,8 +124,7 @@ def fetch_spotify_tracks(config):
     return tracks
 
 
-def fetch_soundcloud_tracks(config):
-    url = config["soundcloud_playlist_url"]
+def fetch_soundcloud_tracks(url):
     print(f"  URL: {url}")
 
     flat_opts = {
@@ -230,17 +229,17 @@ def deduplicate_tracks(spotify_tracks, sc_tracks):
 # Archive
 # ---------------------------------------------------------------------------
 
-def load_archive():
-    if not os.path.exists(ARCHIVE_FILE):
+def load_archive(archive_file=ARCHIVE_FILE):
+    if not os.path.exists(archive_file):
         return set()
-    with open(ARCHIVE_FILE, "r", encoding="utf-8") as f:
+    with open(archive_file, "r", encoding="utf-8") as f:
         return {line.strip() for line in f if line.strip()}
 
 
-def load_failed():
-    if not os.path.exists(FAILED_FILE):
+def load_failed(failed_file=FAILED_FILE):
+    if not os.path.exists(failed_file):
         return set()
-    with open(FAILED_FILE, "r", encoding="utf-8") as f:
+    with open(failed_file, "r", encoding="utf-8") as f:
         tracks = set()
         for line in f:
             line = line.strip()
@@ -249,13 +248,13 @@ def load_failed():
         return tracks
 
 
-def remove_from_failed(track):
-    if not os.path.exists(FAILED_FILE):
+def remove_from_failed(track, failed_file=FAILED_FILE):
+    if not os.path.exists(failed_file):
         return
-    with open(FAILED_FILE, "r", encoding="utf-8") as f:
+    with open(failed_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
     kept = [l for l in lines if not l.strip().startswith(track + " —") and l.strip() != track]
-    with open(FAILED_FILE, "w", encoding="utf-8") as f:
+    with open(failed_file, "w", encoding="utf-8") as f:
         f.writelines(kept)
 
 
@@ -310,7 +309,7 @@ def duration_matches(expected, returned):
     return abs(expected - returned) <= DURATION_TOLERANCE
 
 
-def try_download(query, intended_track, expected_duration=None, use_cookies=False, label=""):
+def try_download(query, intended_track, expected_duration=None, use_cookies=False, label="", out_dir=STAGING_DIR):
     """
     Single download attempt for the given search query.
 
@@ -319,14 +318,14 @@ def try_download(query, intended_track, expected_duration=None, use_cookies=Fals
       - PASS if score >= DURATION_THRESHOLD (60) AND duration matches within tolerance
       - FAIL otherwise
 
-    Downloads to STAGING_DIR as 'Title - Artist.mp3' with ID3 tags.
+    Downloads to out_dir as 'Title - Artist.mp3' with ID3 tags.
     Returns (output_path, hit_429) on success, (None, hit_429) on failure.
     hit_429 is True if SC rate-limited at any point so the caller can adapt pacing.
     """
     artist, title = split_artist_title(intended_track)
     safe_name = sanitize_filename(f"{title} - {artist}") if title else sanitize_filename(intended_track)
-    outtmpl = os.path.join(STAGING_DIR, f"{safe_name}.%(ext)s")
-    output_mp3 = os.path.join(STAGING_DIR, f"{safe_name}.mp3")
+    outtmpl = os.path.join(out_dir, f"{safe_name}.%(ext)s")
+    output_mp3 = os.path.join(out_dir, f"{safe_name}.mp3")
 
     base_opts = {
         "quiet": True,
@@ -441,7 +440,7 @@ def try_download(query, intended_track, expected_duration=None, use_cookies=Fals
 
     # Fallback: rename if postprocessor produced a different extension
     for ext in ["m4a", "aac", "mp4", "webm", "opus", "ogg"]:
-        candidate = os.path.join(STAGING_DIR, f"{safe_name}.{ext}")
+        candidate = os.path.join(out_dir, f"{safe_name}.{ext}")
         if os.path.exists(candidate):
             os.rename(candidate, output_mp3)
             write_tags(output_mp3, artist, title or intended_track)
@@ -450,7 +449,7 @@ def try_download(query, intended_track, expected_duration=None, use_cookies=Fals
     return None, hit_429
 
 
-def download_track(track, expected_duration=None):
+def download_track(track, expected_duration=None, out_dir=STAGING_DIR):
     """
     Tries all 4 download strategies in priority order.
     Returns (success: bool, source: str | None, reason: str | None, hit_429: bool).
@@ -467,7 +466,7 @@ def download_track(track, expected_duration=None):
     for query, use_cookies, label, source in strategies:
         print(f"  → {label}...", end=" ", flush=True)
         result, hit_429 = try_download(query, track, expected_duration=expected_duration,
-                                       use_cookies=use_cookies, label=label)
+                                       use_cookies=use_cookies, label=label, out_dir=out_dir)
         if hit_429:
             ever_429 = True
         if result:
@@ -482,51 +481,37 @@ def download_track(track, expected_duration=None):
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
-    config = load_config()
-    os.makedirs(STAGING_DIR, exist_ok=True)
-
-    print("Fetching Spotify tracks...")
-    spotify_tracks = fetch_spotify_tracks(config)
-    print(f"  {len(spotify_tracks)} tracks found")
-
-    print("Fetching SoundCloud tracks...")
-    sc_tracks = fetch_soundcloud_tracks(config)
-    print(f"  {len(sc_tracks)} tracks found")
-
-    print("Merging and deduplicating...")
-    all_tracks = deduplicate_tracks(spotify_tracks, sc_tracks)
-    print(f"  {len(all_tracks)} unique tracks total")
-
-    archive = load_archive()
-    failed = load_failed()
-    new_tracks = [(t, d) for t, d in all_tracks if t not in archive]
-    skipped_count = len(all_tracks) - len(new_tracks)
-    print(f"  {skipped_count} already in archive, {len(new_tracks)} to download\n")
-
+def download_all(tracks, out_dir, archive_file, failed_file, sources_file=None):
+    """
+    Downloads each (track, duration) into out_dir, logging successes to archive_file
+    (and sources_file if given) and failures to failed_file.
+    Returns (downloaded, sc_count, yt_count, failed_count).
+    """
+    failed = load_failed(failed_file)
     downloaded_count = 0
     failed_count = 0
     sc_count = 0
     yt_count = 0
     current_delay = TRACK_DELAY
 
-    for i, (track, duration) in enumerate(new_tracks, 1):
+    for i, (track, duration) in enumerate(tracks, 1):
         if i > 1:
             time.sleep(current_delay)
-        print(f"[{i}/{len(new_tracks)}] {track}")
-        success, source, reason, hit_429 = download_track(track, expected_duration=duration)
+        print(f"[{i}/{len(tracks)}] {track}")
+        success, source, reason, hit_429 = download_track(track, expected_duration=duration, out_dir=out_dir)
 
         if hit_429 and current_delay < TRACK_DELAY_AFTER_429:
             current_delay = TRACK_DELAY_AFTER_429
             print(f"  SC throttling detected — increasing track delay to {current_delay}s for remaining downloads")
 
         if success:
-            with open(ARCHIVE_FILE, "a", encoding="utf-8") as f:
+            with open(archive_file, "a", encoding="utf-8") as f:
                 f.write(f"{track}\n")
-            with open(SOURCES_FILE, "a", encoding="utf-8") as f:
-                f.write(f"{track} — {source}\n")
+            if sources_file:
+                with open(sources_file, "a", encoding="utf-8") as f:
+                    f.write(f"{track} — {source}\n")
             if track in failed:
-                remove_from_failed(track)
+                remove_from_failed(track, failed_file)
                 failed.discard(track)
             downloaded_count += 1
             if source == "SC":
@@ -535,10 +520,37 @@ def main():
                 yt_count += 1
         else:
             if track not in failed:
-                with open(FAILED_FILE, "a", encoding="utf-8") as f:
+                with open(failed_file, "a", encoding="utf-8") as f:
                     f.write(f"{track} — {reason}\n")
                 failed.add(track)
             failed_count += 1
+
+    return downloaded_count, sc_count, yt_count, failed_count
+
+
+def main():
+    config = load_config()
+    os.makedirs(STAGING_DIR, exist_ok=True)
+
+    print("Fetching Spotify tracks...")
+    spotify_tracks = fetch_spotify_tracks(config, config["spotify_playlist_id"])
+    print(f"  {len(spotify_tracks)} tracks found")
+
+    print("Fetching SoundCloud tracks...")
+    sc_tracks = fetch_soundcloud_tracks(config["soundcloud_playlist_url"])
+    print(f"  {len(sc_tracks)} tracks found")
+
+    print("Merging and deduplicating...")
+    all_tracks = deduplicate_tracks(spotify_tracks, sc_tracks)
+    print(f"  {len(all_tracks)} unique tracks total")
+
+    archive = load_archive()
+    new_tracks = [(t, d) for t, d in all_tracks if t not in archive]
+    skipped_count = len(all_tracks) - len(new_tracks)
+    print(f"  {skipped_count} already in archive, {len(new_tracks)} to download\n")
+
+    downloaded_count, sc_count, yt_count, failed_count = download_all(
+        new_tracks, STAGING_DIR, ARCHIVE_FILE, FAILED_FILE, SOURCES_FILE)
 
     print(f"\nDone. {downloaded_count} downloaded ({sc_count} from SC, {yt_count} from YT), "
           f"{skipped_count} skipped, {failed_count} failed.")

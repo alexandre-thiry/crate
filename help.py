@@ -14,6 +14,8 @@ CRATE — quick reference
 COMMANDS
   crate run        full pipeline: yt-dlp check → sync → analyze → sort preview → apply? [y/n]
   crate sync       download new tracks from Spotify + SoundCloud → ~/Desktop/Music/_staging/
+  crate grab <link>    download any Spotify/SoundCloud playlist → ~/Desktop/Music/<Playlist Name>/
+                       (same search order as sync; re-run the link to fetch only new tracks)
   crate analyze    score every track in _staging/ for energy (0–100) → analysis.csv
   crate sort       preview where each track goes → writes sort_overrides.txt
   crate sort --apply   move tracks into house/peak, house/warm up, house/closing
