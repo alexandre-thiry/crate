@@ -2,7 +2,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from grab import parse_link, folder_name
+from grab import parse_link, folder_name, playlist_dir, GRAB_DIR
 
 
 def test_parse_link_spotify_url():
@@ -44,9 +44,23 @@ def test_folder_name_strips_whitespace_and_dots():
     assert folder_name("  Summer 26... ") == "Summer 26"
 
 
-def test_folder_name_rejects_reserved_and_empty():
-    assert folder_name("house") is None
-    assert folder_name("House") is None
-    assert folder_name("_staging") is None
-    assert folder_name("Unsorted") is None
+def test_folder_name_rejects_empty():
     assert folder_name("   ") is None
+    assert folder_name("...") is None
+
+
+def test_folder_name_allows_former_reserved_names():
+    assert folder_name("house") == "house"
+
+
+def test_playlist_dir_by_source():
+    assert playlist_dir("spotify", "reggaeton") == os.path.join(GRAB_DIR, "Spotify", "reggaeton")
+    assert playlist_dir("soundcloud", "mashups") == os.path.join(GRAB_DIR, "SoundCloud", "mashups")
+
+
+def test_playlist_dir_rejects_empty_name():
+    assert playlist_dir("spotify", "  ") is None
+
+
+def test_grab_dir_location():
+    assert GRAB_DIR == os.path.expanduser("~/Desktop/Music/Downloaded Playlists")
