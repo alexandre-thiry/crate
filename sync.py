@@ -13,7 +13,7 @@ import time
 from dotenv import load_dotenv
 from mutagen.id3 import ID3, TIT2, TPE1, TPE2, ID3NoHeaderError, TALB
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyOAuth, SpotifyOauthError
 import yt_dlp
 from thefuzz import fuzz
 
@@ -24,6 +24,7 @@ ARCHIVE_FILE = os.path.join(PROJECT_DIR, "archive.txt")
 FAILED_FILE = os.path.join(PROJECT_DIR, "failed.txt")
 SOURCES_FILE = os.path.join(PROJECT_DIR, "sources.txt")
 COOKIES_FILE = os.path.join(PROJECT_DIR, "soundcloud.cookies")
+SPOTIFY_CACHE = os.path.join(PROJECT_DIR, ".cache")
 
 # --- Thresholds ---
 DEDUP_THRESHOLD    = 90   # min similarity to treat two tracks as duplicates
@@ -61,23 +62,41 @@ def load_config():
 # Fetching
 # ---------------------------------------------------------------------------
 
-def fetch_spotify_tracks(config):
-    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+def get_spotify(config):
+    """Log in to Spotify. Spotify refresh tokens expire after 6 months —
+    when that happens, discard the cached token and redo the browser login."""
+    auth = SpotifyOAuth(
         client_id=config["spotify_client_id"],
         client_secret=config["spotify_client_secret"],
         redirect_uri=config["spotify_redirect_uri"],
         scope="playlist-read-private",
-    ))
-
+        cache_path=SPOTIFY_CACHE,
+    )
     try:
+        auth.get_access_token(as_dict=False)
+    except SpotifyOauthError as e:
+        if "invalid_grant" not in str(e):
+            raise
+        print("  Spotify login expired (6-month limit). Opening browser to log in again...")
+        if os.path.exists(SPOTIFY_CACHE):
+            os.remove(SPOTIFY_CACHE)
+        auth.get_access_token(as_dict=False)
+    return spotipy.Spotify(auth_manager=auth)
+
+
+def fetch_spotify_tracks(config):
+    # Any Spotify failure stops the run — continuing would silently skip every Spotify track
+    try:
+        sp = get_spotify(config)
         results = sp.playlist_tracks(config["spotify_playlist_id"])
     except Exception as e:
-        print(f"  ERROR calling playlist_tracks: {e}")
-        return []
+        print(f"  ERROR: Spotify failed: {e}")
+        print("  Stopping so Spotify tracks aren't silently skipped. See: crate help")
+        sys.exit(1)
 
     if not results:
         print("  ERROR: playlist_tracks returned None")
-        return []
+        sys.exit(1)
 
     print(f"  total tracks reported by Spotify: {results.get('total', 'unknown')}")
 
