@@ -129,6 +129,9 @@ TROUBLESHOOTING
 ─────────────────────────────────────────────────────────────────────────────
   YouTube "HTTP Error 403: Forbidden"       → crate update
   SoundCloud "HTTP Error 404" on searches   → crate update
+  Spotify "invalid_grant" / token expired   → normal every 6 months; crate opens
+                                              the browser — click Agree. If it
+                                              still fails: rm .cache in crate/
   "429 Too Many Requests" / "rate limited"  → VPN or wait 30–60 min, rerun
   "This video is DRM protected"             → normal, falls back to YouTube
   .webp / .jpg / .part files in _staging/   → leftovers from failed downloads;
