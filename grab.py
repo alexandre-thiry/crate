@@ -2,7 +2,7 @@
 """
 Crate — grab.py
 Downloads any Spotify or SoundCloud playlist from a link into
-~/Desktop/Music/<Playlist Name>/, using the same SC → YT search order as sync.py.
+~/Desktop/Music/Downloaded Playlists/<Spotify|SoundCloud>/<Playlist Name>/, using the same SC → YT search order as sync.py.
 Re-running the same link only downloads tracks added since last time.
 
 Usage:
@@ -21,8 +21,8 @@ from sync import (
     get_spotify, load_archive, load_config, sanitize_filename,
 )
 
-MUSIC_DIR = os.path.expanduser("~/Desktop/Music/")
-RESERVED_FOLDERS = {"house", "_staging", "unsorted"}  # crate's own folders — never grab into these
+GRAB_DIR = os.path.expanduser("~/Desktop/Music/Downloaded Playlists")
+SOURCE_FOLDERS = {"spotify": "Spotify", "soundcloud": "SoundCloud"}
 ARCHIVE_NAME = ".crate-archive.txt"
 FAILED_NAME = "failed.txt"
 
@@ -44,11 +44,15 @@ def parse_link(link):
 
 
 def folder_name(playlist_name):
-    """Safe folder name for a playlist, or None if empty or clashing with crate's own folders."""
+    """Safe folder name for a playlist, or None if nothing usable is left."""
     name = sanitize_filename(playlist_name).strip().rstrip(".").strip()
-    if not name or name.lower() in RESERVED_FOLDERS:
-        return None
-    return name
+    return name or None
+
+
+def playlist_dir(kind, playlist_name):
+    """Landing folder for a playlist: GRAB_DIR/<Spotify|SoundCloud>/<name>, or None if the name is unusable."""
+    name = folder_name(playlist_name)
+    return os.path.join(GRAB_DIR, SOURCE_FOLDERS[kind], name) if name else None
 
 
 def spotify_playlist_name(config, playlist_id):
@@ -87,13 +91,11 @@ def main():
     else:
         playlist_name = soundcloud_playlist_name(ref)
 
-    name = folder_name(playlist_name)
-    if not name:
-        print(f"ERROR: can't use playlist name {playlist_name!r} as a folder "
-              f"(empty, or clashes with house/_staging/Unsorted). Rename the playlist and retry.")
+    out_dir = playlist_dir(kind, playlist_name)
+    if not out_dir:
+        print(f"ERROR: can't use playlist name {playlist_name!r} as a folder. Rename the playlist and retry.")
         sys.exit(1)
 
-    out_dir = os.path.join(MUSIC_DIR, name)
     archive_file = os.path.join(out_dir, ARCHIVE_NAME)
     failed_file = os.path.join(out_dir, FAILED_NAME)
     os.makedirs(out_dir, exist_ok=True)

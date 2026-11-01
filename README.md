@@ -12,7 +12,7 @@ Crate is eight tools in one:
 Pulls your master playlists from Spotify and SoundCloud, merges them into one deduplicated list, and downloads every track you don't already have — in the best quality available. Files land in a staging folder, named and tagged correctly, ready for rekordbox.
 
 **`grab.py` — Download any playlist**
-Give it a Spotify or SoundCloud playlist link and it downloads every track into `~/Desktop/Music/<Playlist Name>/`, using the same SoundCloud → YouTube search as sync. Re-running the same link only downloads tracks added since last time.
+Give it a Spotify or SoundCloud playlist link and it downloads every track into `~/Desktop/Music/Downloaded Playlists/<Spotify|SoundCloud>/<Playlist Name>/`, using the same SoundCloud → YouTube search as sync. Re-running the same link only downloads tracks added since last time.
 
 **`analyze.py` — Score your tracks by energy**
 Scans your staging folder and gives every track a composite energy score (0–100) based on three audio characteristics: loudness, brightness, and how percussive it sounds. Already-analyzed tracks are cached so only new tracks are processed on subsequent runs.
@@ -164,9 +164,11 @@ Example: `Crowd Control - Fisher.mp3`
 venv/bin/python grab.py <spotify or soundcloud playlist link>
 ```
 
-Downloads a playlist that isn't your master playlist (a friend's, a genre outside house, etc.) into `~/Desktop/Music/<Playlist Name>/`. Same search order, verification, 320kbps MP3s, naming and tags as sync. Each folder keeps its own hidden `.crate-archive.txt`, so re-running the link only fetches new tracks, and a `failed.txt` for tracks that couldn't be found. These tracks don't touch `archive.txt` and don't go through analyze or sort.
+Downloads a playlist that isn't your master playlist (a friend's, a genre outside house, etc.) into `~/Desktop/Music/Downloaded Playlists/<Spotify|SoundCloud>/<Playlist Name>/`. Same search order, verification, 320kbps MP3s, naming and tags as sync. Each folder keeps its own hidden `.crate-archive.txt`, so re-running the link only fetches new tracks, and a `failed.txt` for tracks that couldn't be found. These tracks don't touch `archive.txt` and don't go through analyze or sort.
 
-Spotify can only read your own playlists, ones you follow, and public ones. Playlist names that clash with `house`, `_staging` or `Unsorted` are refused.
+You can drag the downloaded MP3s anywhere — just leave the hidden `.crate-archive.txt` in place, or the next run re-downloads the whole playlist.
+
+Spotify can only read your own playlists, ones you follow, and public ones.
 
 ---
 
