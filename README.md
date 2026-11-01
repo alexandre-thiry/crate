@@ -6,10 +6,13 @@ Automatically sync and download your Spotify and SoundCloud playlists as high-qu
 
 ## What It Does
 
-Crate is seven tools in one:
+Crate is eight tools in one:
 
 **`sync.py` — Download your music**
 Pulls your master playlists from Spotify and SoundCloud, merges them into one deduplicated list, and downloads every track you don't already have — in the best quality available. Files land in a staging folder, named and tagged correctly, ready for rekordbox.
+
+**`grab.py` — Download any playlist**
+Give it a Spotify or SoundCloud playlist link and it downloads every track into `~/Desktop/Music/<Playlist Name>/`, using the same SoundCloud → YouTube search as sync. Re-running the same link only downloads tracks added since last time.
 
 **`analyze.py` — Score your tracks by energy**
 Scans your staging folder and gives every track a composite energy score (0–100) based on three audio characteristics: loudness, brightness, and how percussive it sounds. Already-analyzed tracks are cached so only new tracks are processed on subsequent runs.
@@ -152,6 +155,18 @@ Before accepting any result, Crate verifies it actually matches the track you as
 Example: `Crowd Control - Fisher.mp3`
 
 **ID3 tags written:** Title and Artist — readable by rekordbox on import. Cover art is embedded automatically.
+
+---
+
+## Grabbing Any Playlist
+
+```bash
+venv/bin/python grab.py <spotify or soundcloud playlist link>
+```
+
+Downloads a playlist that isn't your master playlist (a friend's, a genre outside house, etc.) into `~/Desktop/Music/<Playlist Name>/`. Same search order, verification, 320kbps MP3s, naming and tags as sync. Each folder keeps its own hidden `.crate-archive.txt`, so re-running the link only fetches new tracks, and a `failed.txt` for tracks that couldn't be found. These tracks don't touch `archive.txt` and don't go through analyze or sort.
+
+Spotify can only read your own playlists, ones you follow, and public ones. Playlist names that clash with `house`, `_staging` or `Unsorted` are refused.
 
 ---
 
@@ -311,6 +326,7 @@ Prints a one-screen overview of every command, then details and a troubleshootin
 crate/
 ├── run.py               # Run full pipeline in one command
 ├── sync.py              # Download script
+├── grab.py              # Download any playlist from a link
 ├── analyze.py           # Energy analysis — scores tracks, caches results
 ├── sort.py              # Sorts tracks into peak / warm up / closing folders
 ├── rename.py            # Fixes file naming using ID3 tags
@@ -319,6 +335,7 @@ crate/
 ├── requirements.txt     # Python dependencies
 ├── tests/
 │   ├── test_analyze.py  # Unit tests for analyze.py
+│   ├── test_grab.py     # Unit tests for grab.py
 │   └── test_update.py   # Unit tests for update.py
 ├── .env                 # Credentials (never committed)
 ├── soundcloud.cookies   # SC session cookies (never committed)
