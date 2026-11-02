@@ -138,8 +138,8 @@ For every track, Crate tries four strategies in order and stops at the first suc
 
 1. **Exact search on SoundCloud** — best quality (256kbps AAC via SC Go+, encoded to 320kbps MP3)
 2. **Fuzzy search on SoundCloud** — if the exact title isn't found
-3. **Exact search on YouTube** — fallback
-4. **Fuzzy search on YouTube** — last resort
+3. **YouTube Music songs** — official album audio, checked one result at a time (top 5)
+4. **YouTube video search** — last resort, top 5 results
 
 Before accepting any result, Crate verifies it actually matches the track you asked for — see [Verification](#how-verification-works) below.
 
@@ -226,13 +226,17 @@ Default thresholds (configurable at the top of `sort.py`):
 
 Crate doesn't blindly download the first search result. Before accepting any result, it checks whether it actually matches the track you asked for.
 
-**A result passes if either condition is met:**
+**A result must pass all of these:**
 
-1. **Title match** — fuzzy similarity between the search query and the returned title is ≥ 85%. Noise like `(Extended Mix)`, `feat. Someone`, and collab notation (`x ArtistName`) is stripped before comparing.
+1. **Song title match ≥ 80%** — comparing only the song title, not the artist, so another song by the same artist is rejected. Noise like `(Extended Mix)`, `feat. Someone`, and collab notation (`x ArtistName`) is stripped before comparing.
 
-2. **Duration rescue** — if the title score is between 60–84% but the returned track's duration is within ±8 seconds of the expected duration (from Spotify/SoundCloud metadata), it passes anyway. This handles tracks where the title is formatted differently but the song is the same.
+2. **Length within ±4 seconds** of the Spotify/SoundCloud length. This is what rejects music videos (intros, skits, different endings), live versions, and short clips or previews.
 
-If neither condition is met, that strategy is rejected and the next one is tried.
+3. **Artist + title match ≥ 60%** (or ≥ 85% if the expected length is unknown).
+
+When several results pass, Crate prefers official audio (YouTube Music, "Artist - Topic" channels, "(Audio)") over lyric videos, and avoids titles marked official/music video, live, visualizer or remix. Every rejected result is printed with the reason. After downloading, the file's real length is checked again — if it's off, the file is deleted and the next result is tried.
+
+Each MP3's comment tag records where it came from and the original quality, e.g. `https://www.youtube.com/watch?v=… | opus 133kbps`.
 
 ---
 
@@ -268,9 +272,11 @@ All tunable settings are at the top of `sync.py`:
 ```python
 # Matching
 DEDUP_THRESHOLD    = 90   # % similarity to treat two tracks as duplicates
-VERIFY_THRESHOLD   = 85   # min score to accept a search result by title alone
-DURATION_THRESHOLD = 60   # min title score when duration can rescue a result
-DURATION_TOLERANCE = 8    # seconds — how close durations must be for a rescue
+TITLE_THRESHOLD    = 80   # min song-title match (artist ignored) — rejects other songs by the same artist
+DURATION_THRESHOLD = 60   # min artist + title match when the length matches
+VERIFY_THRESHOLD   = 85   # min artist + title match when the expected length is unknown
+DURATION_TOLERANCE = 4    # seconds — candidates further than this from the expected length are rejected
+SEARCH_RESULTS     = 5    # candidates checked per YouTube search
 
 # Rate limiting
 TRACK_DELAY           = 3    # seconds between tracks (normal)
@@ -338,6 +344,7 @@ crate/
 ├── tests/
 │   ├── test_analyze.py  # Unit tests for analyze.py
 │   ├── test_grab.py     # Unit tests for grab.py
+│   ├── test_sync.py     # Unit tests for search-result selection
 │   └── test_update.py   # Unit tests for update.py
 ├── .env                 # Credentials (never committed)
 ├── soundcloud.cookies   # SC session cookies (never committed)

@@ -40,13 +40,16 @@ SYNC — how downloads work
 
     1. exact SoundCloud search    scsearch1:"Artist - Title"   (with Go+ cookies)
     2. fuzzy SoundCloud search    scsearch1:Artist - Title
-    3. exact YouTube search       ytsearch1:"Artist - Title"
-    4. fuzzy YouTube search       ytsearch1:Artist - Title
+    3. YouTube Music songs        official album audio, top 5
+    4. YouTube video search       ytsearch5:Artist - Title, top 5
 
-  Each result is verified before downloading:
-    - title match ≥ 85%                          → accept
-    - title match ≥ 60% AND duration within ±8s  → accept ("duration rescue")
-    - otherwise                                  → reject, try the next strategy
+  Each result must pass all of these before downloading:
+    - song title match ≥ 80%  (artist ignored → other songs by the artist are rejected)
+    - length within ±4s of Spotify/SoundCloud  (rejects music videos, live, clips)
+    - artist + title match ≥ 60%  (≥ 85% if the expected length is unknown)
+  Rejected results are printed with the reason. Official audio is preferred over
+  lyric videos. The downloaded file's length is re-checked; if off, it's deleted.
+  The comment tag records the source URL and original quality.
 
   Output: 320kbps MP3 named "Track Name - Artist.mp3", tagged, with cover art.
 

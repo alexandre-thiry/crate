@@ -11,7 +11,9 @@ import sys
 import time
 
 from dotenv import load_dotenv
-from mutagen.id3 import ID3, TIT2, TPE1, TPE2, ID3NoHeaderError, TALB
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, COMM, ID3NoHeaderError, TALB
+from mutagen.mp3 import MP3
+from urllib.parse import quote
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth, SpotifyOauthError
 import yt_dlp
@@ -28,9 +30,11 @@ SPOTIFY_CACHE = os.path.join(PROJECT_DIR, ".cache")
 
 # --- Thresholds ---
 DEDUP_THRESHOLD    = 90   # min similarity to treat two tracks as duplicates
-VERIFY_THRESHOLD   = 85   # min partial_ratio to accept a yt-dlp result on title alone
-DURATION_THRESHOLD = 60   # min partial_ratio when duration match rescues a low score
-DURATION_TOLERANCE = 8    # seconds — duration must match within this to rescue
+TITLE_THRESHOLD    = 80   # min song-title match (artist ignored) — rejects other songs by the same artist
+DURATION_THRESHOLD = 60   # min artist + title match when the length matches
+VERIFY_THRESHOLD   = 85   # min artist + title match when the expected length is unknown
+DURATION_TOLERANCE = 4    # seconds — candidates further than this from the expected length are rejected
+SEARCH_RESULTS     = 5    # candidates checked per YouTube search
 
 # --- Rate limiting ---
 TRACK_DELAY         = 3     # seconds between each track download (avoids SC throttling)
@@ -274,7 +278,7 @@ def split_artist_title(intended_track):
     return intended_track.strip(), ''
 
 
-def write_tags(filepath, artist, title):
+def write_tags(filepath, artist, title, comment=None):
     try:
         try:
             tags = ID3(filepath)
@@ -284,6 +288,9 @@ def write_tags(filepath, artist, title):
         tags['TPE1'] = TPE1(encoding=3, text=artist)
         tags['TPE2'] = TPE2(encoding=3, text=artist)
         tags.delall('TALB')
+        if comment:
+            tags.delall('COMM')
+            tags.add(COMM(encoding=3, lang='eng', desc='', text=comment))
         tags.save(filepath)
     except Exception as e:
         print(f"  WARNING: could not write tags: {e}")
@@ -302,179 +309,263 @@ def clean_for_compare(s):
     return re.sub(r'\s+', ' ', s).strip()
 
 
-def duration_matches(expected, returned):
-    """True if both durations are known and within DURATION_TOLERANCE seconds."""
-    if expected is None or returned is None:
-        return False
-    return abs(expected - returned) <= DURATION_TOLERANCE
+def _segments(s):
+    """'Artist - Title (Mix)' → ['artist', 'title'] after cleaning, for per-part matching."""
+    return [p.strip() for p in clean_for_compare(s).lower().split(" - ") if p.strip()]
 
 
-def try_download(query, intended_track, expected_duration=None, use_cookies=False, label="", out_dir=STAGING_DIR):
+def title_score(intended_track, returned_title):
+    """Best fuzz.ratio between the intended song title and any ' - ' part of the returned title.
+    Ignores the artist so a different song by the same artist scores low."""
+    _, title = split_artist_title(intended_track)
+    wanted = _segments(title or intended_track)
+    got = _segments(returned_title)
+    if not wanted or not got:
+        return 0
+    return max(fuzz.ratio(w, g) for w in wanted for g in got)
+
+
+def full_score(intended_track, candidate):
+    """Artist + title match: intended track vs returned title, and vs 'uploader - title'."""
+    query = clean_for_compare(intended_track).lower()
+    title = candidate.get("title") or ""
+    uploader = candidate.get("uploader") or ""
+    scores = [fuzz.partial_ratio(query, clean_for_compare(title).lower())]
+    if uploader:
+        scores.append(fuzz.partial_ratio(query, clean_for_compare(f"{uploader} - {title}").lower()))
+    return max(scores)
+
+
+PENALTY_PATTERNS = [r"official\s+(hd\s+)?(music\s+)?video", r"music\s+video", r"\blive\b", r"visuali[sz]er", r"\bremix\b"]
+
+
+def penalty(candidate, intended_track):
+    """Number of video/live/visualizer/remix markers inside the candidate title's brackets."""
+    bracketed = " ".join(re.findall(r"[(\[]([^)\]]*)[)\]]", candidate.get("title") or "")).lower()
+    patterns = PENALTY_PATTERNS
+    if "remix" in intended_track.lower():
+        patterns = [p for p in patterns if "remix" not in p]
+    return sum(1 for p in patterns if re.search(p, bracketed))
+
+
+def is_preferred(candidate):
+    """Official audio: YouTube Music result, 'Artist - Topic' channel, or '(Audio)' in the title."""
+    uploader = (candidate.get("uploader") or "").lower()
+    bracketed = " ".join(re.findall(r"[(\[]([^)\]]*)[)\]]", candidate.get("title") or "")).lower()
+    return candidate.get("source") == "ytmusic" or uploader.endswith("- topic") or "audio" in bracketed
+
+
+def pick_candidates(candidates, intended_track, expected_duration):
     """
-    Single download attempt for the given search query.
+    Checks search results against the intended track.
+    Returns (passing, rejected): passing is best-first, rejected is [(candidate, reason)].
 
-    Verification logic:
-      - PASS if title/full score >= VERIFY_THRESHOLD (85)
-      - PASS if score >= DURATION_THRESHOLD (60) AND duration matches within tolerance
-      - FAIL otherwise
-
-    Downloads to out_dir as 'Title - Artist.mp3' with ID3 tags.
-    Returns (output_path, hit_429) on success, (None, hit_429) on failure.
-    hit_429 is True if SC rate-limited at any point so the caller can adapt pacing.
+    A candidate passes when its song title matches ≥ TITLE_THRESHOLD and either:
+      - its length is within DURATION_TOLERANCE of expected_duration and artist + title ≥ DURATION_THRESHOLD, or
+      - the expected length is unknown and artist + title ≥ VERIFY_THRESHOLD.
+    Passing candidates are ranked: fewest penalties, then official audio, then closest length, then search order.
     """
-    artist, title = split_artist_title(intended_track)
-    safe_name = sanitize_filename(f"{title} - {artist}") if title else sanitize_filename(intended_track)
-    outtmpl = os.path.join(out_dir, f"{safe_name}.%(ext)s")
-    output_mp3 = os.path.join(out_dir, f"{safe_name}.mp3")
+    passing, rejected = [], []
+    for c in candidates:
+        t = title_score(intended_track, c.get("title") or "")
+        full = full_score(intended_track, c)
+        dur = c.get("duration")
+        if t < TITLE_THRESHOLD:
+            rejected.append((c, f"title match {t}%"))
+        elif expected_duration is None:
+            if full < VERIFY_THRESHOLD:
+                rejected.append((c, f"match {full}% (length unknown, needs {VERIFY_THRESHOLD}%)"))
+            else:
+                passing.append(c)
+        elif dur is None:
+            rejected.append((c, "length unknown"))
+        elif abs(dur - expected_duration) > DURATION_TOLERANCE:
+            rejected.append((c, f"length {dur - expected_duration:+.0f}s"))
+        elif full < DURATION_THRESHOLD:
+            rejected.append((c, f"match {full}%"))
+        else:
+            passing.append(c)
 
-    base_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "ignoreerrors": False,
+    def rank(c):
+        diff = abs(c["duration"] - expected_duration) if expected_duration is not None else 0
+        return (penalty(c, intended_track), not is_preferred(c), diff)
+    passing.sort(key=rank)  # stable: ties keep search order
+    return passing, rejected
+
+
+def describe(candidate):
+    dur = candidate.get("duration")
+    dur_str = f"{int(dur) // 60}:{int(dur) % 60:02d}" if dur is not None else "?:??"
+    return f"\"{candidate.get('title')}\" ({candidate.get('uploader') or '?'}) {dur_str}"
+
+
+def _to_candidate(entry, source):
+    return {
+        "title": entry.get("title") or "",
+        "uploader": entry.get("uploader") or entry.get("channel") or "",
+        "duration": entry.get("duration"),
+        "url": entry.get("webpage_url") or entry.get("url"),
+        "source": source,
     }
-    if use_cookies:
-        base_opts["cookiefile"] = COOKIES_FILE
 
-    # Step 1: Extract info without downloading (exponential backoff on SC 429)
-    info = None
+
+def search_soundcloud(query):
+    """Top SoundCloud result for query as a candidate list (with Go+ cookies, backoff on 429).
+    Returns (candidates, hit_429)."""
+    opts = {"quiet": True, "no_warnings": True, "cookiefile": COOKIES_FILE}
     hit_429 = False
-    with yt_dlp.YoutubeDL(base_opts) as ydl:
-        attempts = SC_RETRY_WAITS + [None] if use_cookies else [None]
-        for wait in attempts:
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = None
+        for wait in SC_RETRY_WAITS + [None]:
             try:
                 info = ydl.extract_info(query, download=False)
                 break
             except Exception as e:
-                if use_cookies and "429" in str(e) and wait is not None:
+                if "429" in str(e) and wait is not None:
                     hit_429 = True
                     print(f"\n  SC rate limited, waiting {wait}s...", end=" ", flush=True)
                     time.sleep(wait)
                 else:
-                    return None, hit_429
-
+                    return [], hit_429
         if not info:
-            return None, hit_429
-
-        # Search queries return a playlist wrapper with entries
-        if "entries" in info:
-            entries = [e for e in info["entries"] if e]
-            if not entries:
-                return None, hit_429
-            result = entries[0]
-            # If the entry is a bare URL reference with no title, resolve it
-            if not result.get("title") and result.get("url"):
+            return [], hit_429
+        entries = [e for e in info.get("entries", [info]) if e]
+        candidates = []
+        for e in entries[:1]:
+            # A bare URL reference with no title needs resolving
+            if not e.get("title") and e.get("url"):
                 try:
-                    result = ydl.extract_info(result["url"], download=False)
+                    e = ydl.extract_info(e["url"], download=False)
                 except Exception:
-                    return None, hit_429
-        else:
-            result = info
+                    continue
+            candidates.append(_to_candidate(e, "sc"))
+    return candidates, hit_429
 
-        if not result or not result.get("title"):
-            return None, hit_429
 
-        # Step 2: Verify the result matches the intended track
-        returned_title    = result.get("title", "")
-        uploader          = result.get("uploader") or result.get("channel") or ""
-        returned_full     = f"{uploader} - {returned_title}" if uploader else returned_title
-        returned_duration = result.get("duration")  # seconds, may be None
+def search_youtube(track):
+    """Top SEARCH_RESULTS YouTube video results — flat search already includes title, channel and length."""
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"ytsearch{SEARCH_RESULTS}:{track}", download=False)
+    except Exception:
+        return []
+    return [_to_candidate(e, "yt") for e in (info or {}).get("entries") or [] if e]
 
-        clean_query = clean_for_compare(intended_track).lower()
-        score_title = fuzz.partial_ratio(clean_query, clean_for_compare(returned_title).lower())
-        score_full  = fuzz.partial_ratio(clean_query, clean_for_compare(returned_full).lower())
-        best_score  = max(score_title, score_full)
 
-        dur_match   = duration_matches(expected_duration, returned_duration)
-        passed      = best_score >= VERIFY_THRESHOLD or (best_score >= DURATION_THRESHOLD and dur_match)
+def search_youtube_music(track):
+    """Yields YouTube Music 'Songs' results one at a time. The flat search has no lengths,
+    so each result is resolved individually (~2s) — the caller stops at the first that works."""
+    url = "https://music.youtube.com/search?q=" + quote(track.replace(" - ", " ")) + "#songs"
+    opts = {"quiet": True, "no_warnings": True}
+    try:
+        with yt_dlp.YoutubeDL({**opts, "extract_flat": True, "playlistend": SEARCH_RESULTS}) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception:
+        return
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        for e in ((info or {}).get("entries") or [])[:SEARCH_RESULTS]:
+            if not e or not e.get("url"):
+                continue
+            try:
+                yield _to_candidate(ydl.extract_info(e["url"], download=False), "ytmusic")
+            except Exception:
+                continue
 
-        verdict = "PASS" if passed else "FAIL"
-        if passed and best_score < VERIFY_THRESHOLD:
-            verdict += " (duration rescue)"
 
-        platform = "SoundCloud" if use_cookies else "YouTube"
-        exp_dur_str = f"{expected_duration}s" if expected_duration is not None else "unknown"
-        ret_dur_str = f"{returned_duration}s" if returned_duration is not None else "unknown"
+def download_candidate(candidate, intended_track, expected_duration, out_dir, use_cookies):
+    """
+    Downloads one verified candidate to out_dir as 'Title - Artist.mp3' (320kbps, tagged, cover art,
+    source URL + original codec/bitrate in the comment tag).
+    Deletes the file and returns None if its real length is off by more than DURATION_TOLERANCE.
+    """
+    artist, title = split_artist_title(intended_track)
+    safe_name = sanitize_filename(f"{title} - {artist}") if title else sanitize_filename(intended_track)
+    output_mp3 = os.path.join(out_dir, f"{safe_name}.mp3")
 
-        print(f"  [DEBUG] Platform:      {platform} ({label})")
-        print(f"  [DEBUG] Title query:   {intended_track}")
-        print(f"  [DEBUG] Title result:  {returned_title}")
-        print(f"  [DEBUG] Full result:   {returned_full}")
-        print(f"  [DEBUG] Score (title): {score_title} | Score (full): {score_full} | {verdict}")
-        print(f"  [DEBUG] Duration:      expected={exp_dur_str}  returned={ret_dur_str}  match={dur_match}")
-
-        if not passed:
-            return None, hit_429
-
-        track_url = result.get("webpage_url") or result.get("url")
-        if not track_url:
-            return None, hit_429
-
-    # Step 3: Download using the verified URL
-    download_opts = {
-        **base_opts,
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
         "format": "bestaudio/best",
         "writethumbnail": True,
         "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "320",
-            },
-            {
-                "key": "EmbedThumbnail",
-                "already_have_thumbnail": False,
-            },
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"},
+            {"key": "EmbedThumbnail", "already_have_thumbnail": False},
         ],
-        "outtmpl": outtmpl,
+        "outtmpl": os.path.join(out_dir, f"{safe_name}.%(ext)s"),
     }
+    if use_cookies:
+        opts["cookiefile"] = COOKIES_FILE
 
-    with yt_dlp.YoutubeDL(download_opts) as ydl:
+    with yt_dlp.YoutubeDL(opts) as ydl:
         try:
-            ydl.download([track_url])
+            info = ydl.extract_info(candidate["url"], download=True)
         except Exception:
-            return None, hit_429
+            return None
 
-    if os.path.exists(output_mp3):
-        write_tags(output_mp3, artist, title or intended_track)
-        return output_mp3, hit_429
+    if not os.path.exists(output_mp3):
+        # Fallback: rename if postprocessor produced a different extension
+        for ext in ["m4a", "aac", "mp4", "webm", "opus", "ogg"]:
+            candidate_file = os.path.join(out_dir, f"{safe_name}.{ext}")
+            if os.path.exists(candidate_file):
+                os.rename(candidate_file, output_mp3)
+                break
+        else:
+            return None
 
-    # Fallback: rename if postprocessor produced a different extension
-    for ext in ["m4a", "aac", "mp4", "webm", "opus", "ogg"]:
-        candidate = os.path.join(out_dir, f"{safe_name}.{ext}")
-        if os.path.exists(candidate):
-            os.rename(candidate, output_mp3)
-            write_tags(output_mp3, artist, title or intended_track)
-            return output_mp3, hit_429
+    if expected_duration is not None:
+        actual = MP3(output_mp3).info.length
+        if abs(actual - expected_duration) > DURATION_TOLERANCE:
+            print(f"    ✗ downloaded file is {actual - expected_duration:+.0f}s off — deleted")
+            os.remove(output_mp3)
+            return None
 
-    return None, hit_429
+    abr = info.get("abr")
+    source = f"{info.get('webpage_url') or candidate['url']} | {info.get('acodec') or '?'} {round(abr) if abr else '?'}kbps"
+    write_tags(output_mp3, artist, title or intended_track, comment=source)
+    return output_mp3
+
+
+def try_candidates(candidates, track, expected_duration, out_dir, use_cookies):
+    """Verifies candidates, logs every rejection, downloads the best passing one.
+    Falls through to the next passing candidate if a download fails its length check."""
+    passing, rejected = pick_candidates(candidates, track, expected_duration)
+    for c, reason in rejected:
+        print(f"    ✗ {describe(c)} — {reason}")
+    for c in passing:
+        print(f"    ✓ {describe(c)}")
+        path = download_candidate(c, track, expected_duration, out_dir, use_cookies)
+        if path:
+            return path
+    return None
 
 
 def download_track(track, expected_duration=None, out_dir=STAGING_DIR):
     """
-    Tries all 4 download strategies in priority order.
+    Tries each source in priority order, stopping at the first verified download:
+      1. exact SoundCloud   2. fuzzy SoundCloud   3. YouTube Music songs (top 5)   4. YouTube videos (top 5)
     Returns (success: bool, source: str | None, reason: str | None, hit_429: bool).
     source is 'SC' or 'YT' on success, None on failure.
     """
-    strategies = [
-        (f'scsearch1:"{track}"', True,  "exact SC", "SC"),
-        (f'scsearch1:{track}',   True,  "fuzzy SC", "SC"),
-        (f'ytsearch1:"{track}"', False, "exact YT", "YT"),
-        (f'ytsearch1:{track}',   False, "fuzzy YT", "YT"),
-    ]
-
     ever_429 = False
-    for query, use_cookies, label, source in strategies:
-        print(f"  → {label}...", end=" ", flush=True)
-        result, hit_429 = try_download(query, track, expected_duration=expected_duration,
-                                       use_cookies=use_cookies, label=label, out_dir=out_dir)
-        if hit_429:
-            ever_429 = True
-        if result:
-            print("✓")
-            return True, source, None, ever_429
-        print("✗")
 
-    return False, None, "not found on SC or YT", ever_429
+    for query, label in [(f'scsearch1:"{track}"', "exact SC"), (f"scsearch1:{track}", "fuzzy SC")]:
+        print(f"  → {label}")
+        candidates, hit_429 = search_soundcloud(query)
+        ever_429 = ever_429 or hit_429
+        if try_candidates(candidates, track, expected_duration, out_dir, use_cookies=True):
+            return True, "SC", None, ever_429
+
+    print("  → YT Music")
+    for c in search_youtube_music(track):
+        if try_candidates([c], track, expected_duration, out_dir, use_cookies=False):
+            return True, "YT", None, ever_429
+
+    print("  → YT search")
+    if try_candidates(search_youtube(track), track, expected_duration, out_dir, use_cookies=False):
+        return True, "YT", None, ever_429
+
+    return False, None, "no result passed title + length checks", ever_429
 
 
 # ---------------------------------------------------------------------------
