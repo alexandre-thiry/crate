@@ -323,7 +323,14 @@ def title_score(intended_track, returned_title):
     got = _segments(returned_title)
     if not wanted or not got:
         return 0
-    return max(fuzz.ratio(w, g) for w in wanted for g in got)
+
+    def score(w, g):
+        # A number the intended title doesn't have means a different song
+        # ("Serrure #5" vs "Serrure #667", "Bande Organisée 2"); "Vol. 52/66" vs "#52" is fine
+        if set(re.findall(r"\d+", g)) - set(re.findall(r"\d+", w)):
+            return 0
+        return fuzz.ratio(w, g)
+    return max(score(w, g) for w in wanted for g in got)
 
 
 def full_score(intended_track, candidate):

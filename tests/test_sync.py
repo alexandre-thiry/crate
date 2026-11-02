@@ -188,3 +188,24 @@ def test_relaxed_skips_penalized_and_far_off_candidates():
     video = cand("Calvin Harris, Dua Lipa - One Kiss (Official Video)", "Calvin Harris", 215)
     far = cand("One Kiss", "Calvin Harris", 209 + RELAXED_TOLERANCE + 1, source="ytmusic")
     assert relaxed_candidates([video, far], "Calvin Harris - One Kiss (with Dua Lipa)", 209) == []
+
+
+@pytest.mark.parametrize("track,returned", [
+    ("La Rvfleuze - Serrure #5", "Serrure #667"),
+    ("La Rvfleuze - Serrure #5", "La Rvfleuze - Serrure #667 feat. Freeze Corleone"),
+    ("13 Organisé - Bande Organisée", "Bande Organisée 2 - SCH / Kofs / JuL"),
+    ("Gazo - Drill FR 4", "Drill FR 3"),
+])
+def test_title_score_different_numbers_are_different_songs(track, returned):
+    assert title_score(track, returned) < 80
+
+
+@pytest.mark.parametrize("track,returned", [
+    ("La Rvfleuze - Serrure #5", "La Rvfleuze - Serrure 5 (Audio Officiel)"),
+    ("Gazo - Drill FR 4", "Drill FR 4"),
+    ("MK - 17", "17"),
+    ("Maroon 5 - Payphone", "Payphone"),
+    ("Bizarrap - Quevedo: Bzrp Music Sessions, Vol. 52/66", "QUEVEDO || BZRP Music Sessions #52"),
+])
+def test_title_score_same_numbers_still_match(track, returned):
+    assert title_score(track, returned) >= 80
