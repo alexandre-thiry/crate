@@ -490,8 +490,14 @@ def download_candidate(candidate, intended_track, expected_duration, out_dir, us
         "writethumbnail": True,
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"},
+            {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"},
             {"key": "EmbedThumbnail", "already_have_thumbnail": False},
         ],
+        # YouTube thumbnails are 16:9 with the square cover centred — crop the centre square
+        # so rekordbox shows it (SC artwork is already square, so the crop is a no-op there)
+        "postprocessor_args": {
+            "thumbnailsconvertor+ffmpeg_o": ["-c:v", "mjpeg", "-vf", "crop='min(iw,ih)':'min(iw,ih)'"],
+        },
         "outtmpl": os.path.join(out_dir, f"{safe_name}.%(ext)s"),
     }
     if use_cookies:
