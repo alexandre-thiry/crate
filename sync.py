@@ -34,6 +34,7 @@ TITLE_THRESHOLD    = 80   # min song-title match (artist ignored) — rejects ot
 DURATION_THRESHOLD = 60   # min artist + title match when the length matches
 VERIFY_THRESHOLD   = 85   # min artist + title match when the expected length is unknown
 DURATION_TOLERANCE = 4    # seconds — candidates further than this from the expected length are rejected
+RELAXED_TOLERANCE  = 10   # seconds — second try when nothing passes, clean results only (no video/live/remix markers)
 SEARCH_RESULTS     = 5    # candidates checked per YouTube search
 
 # --- Rate limiting ---
@@ -348,6 +349,32 @@ def penalty(candidate, intended_track):
     return sum(1 for p in patterns if re.search(p, bracketed))
 
 
+# Not the track asked for: someone else's recording, or the audio was altered.
+# Rejected outright unless the intended track itself carries the same marker (e.g. "… - SPED UP").
+COPY_PATTERNS = {
+    "tribute": r"\btribute\b",
+    "cover": r"[(\[][^)\]]*\bcover\b[^)\]]*[)\]]|\bcover\s+(by|version)\b",
+    "originally by": r"originally\s+(performed\s+)?by",
+    "in the style of": r"in\s+the\s+style\s+of",
+    "(by artist)": r"[(\[]\s*by\s+[^)\]]+[)\]]",
+    "karaoke": r"karaoke",
+    "8D": r"\b8d\b",
+    "slowed": r"\bslowed\b",
+    "sped up": r"sped[\s-]*up",
+    "nightcore": r"nightcore",
+    "instrumental": r"\binstrumental\b",
+}
+
+
+def copy_marker(candidate, intended_track):
+    """Name of the first cover/altered-version marker in the candidate title, or None."""
+    title = candidate.get("title") or ""
+    for label, pattern in COPY_PATTERNS.items():
+        if re.search(pattern, title, re.I) and not re.search(pattern, intended_track, re.I):
+            return label
+    return None
+
+
 def is_preferred(candidate):
     """Official audio: YouTube Music result, 'Artist - Topic' channel, or '(Audio)' in the title."""
     uploader = (candidate.get("uploader") or "").lower()
@@ -355,13 +382,14 @@ def is_preferred(candidate):
     return candidate.get("source") == "ytmusic" or uploader.endswith("- topic") or "audio" in bracketed
 
 
-def pick_candidates(candidates, intended_track, expected_duration):
+def pick_candidates(candidates, intended_track, expected_duration, tolerance=DURATION_TOLERANCE):
     """
     Checks search results against the intended track.
     Returns (passing, rejected): passing is best-first, rejected is [(candidate, reason)].
 
-    A candidate passes when its song title matches ≥ TITLE_THRESHOLD and either:
-      - its length is within DURATION_TOLERANCE of expected_duration and artist + title ≥ DURATION_THRESHOLD, or
+    Covers, tributes and altered versions (COPY_PATTERNS) are always rejected.
+    Otherwise a candidate passes when its song title matches ≥ TITLE_THRESHOLD and either:
+      - its length is within `tolerance` of expected_duration and artist + title ≥ DURATION_THRESHOLD, or
       - the expected length is unknown and artist + title ≥ VERIFY_THRESHOLD.
     Passing candidates are ranked: fewest penalties, then official audio, then closest length, then search order.
     """
@@ -370,7 +398,10 @@ def pick_candidates(candidates, intended_track, expected_duration):
         t = title_score(intended_track, c.get("title") or "")
         full = full_score(intended_track, c)
         dur = c.get("duration")
-        if t < TITLE_THRESHOLD:
+        marker = copy_marker(c, intended_track)
+        if marker:
+            rejected.append((c, f"copy/altered: {marker}"))
+        elif t < TITLE_THRESHOLD:
             rejected.append((c, f"title match {t}%"))
         elif expected_duration is None:
             if full < VERIFY_THRESHOLD:
@@ -379,7 +410,7 @@ def pick_candidates(candidates, intended_track, expected_duration):
                 passing.append(c)
         elif dur is None:
             rejected.append((c, "length unknown"))
-        elif abs(dur - expected_duration) > DURATION_TOLERANCE:
+        elif abs(dur - expected_duration) > tolerance:
             rejected.append((c, f"length {dur - expected_duration:+.0f}s"))
         elif full < DURATION_THRESHOLD:
             rejected.append((c, f"match {full}%"))
@@ -391,6 +422,13 @@ def pick_candidates(candidates, intended_track, expected_duration):
         return (penalty(c, intended_track), not is_preferred(c), diff)
     passing.sort(key=rank)  # stable: ties keep search order
     return passing, rejected
+
+
+def relaxed_candidates(candidates, intended_track, expected_duration):
+    """Second try when nothing passed: allow up to RELAXED_TOLERANCE off, but only clean candidates
+    (no official video / live / visualizer / remix markers) so music videos stay out."""
+    passing, _ = pick_candidates(candidates, intended_track, expected_duration, tolerance=RELAXED_TOLERANCE)
+    return [c for c in passing if penalty(c, intended_track) == 0]
 
 
 def describe(candidate):
@@ -473,11 +511,12 @@ def search_youtube_music(track):
                 continue
 
 
-def download_candidate(candidate, intended_track, expected_duration, out_dir, use_cookies):
+def download_candidate(candidate, intended_track, expected_duration, out_dir, use_cookies,
+                       tolerance=DURATION_TOLERANCE):
     """
     Downloads one verified candidate to out_dir as 'Title - Artist.mp3' (320kbps, tagged, cover art,
     source URL + original codec/bitrate in the comment tag).
-    Deletes the file and returns None if its real length is off by more than DURATION_TOLERANCE.
+    Deletes the file and returns None if its real length is off by more than `tolerance`.
     """
     artist, title = split_artist_title(intended_track)
     safe_name = sanitize_filename(f"{title} - {artist}") if title else sanitize_filename(intended_track)
@@ -521,7 +560,7 @@ def download_candidate(candidate, intended_track, expected_duration, out_dir, us
 
     if expected_duration is not None:
         actual = MP3(output_mp3).info.length
-        if abs(actual - expected_duration) > DURATION_TOLERANCE:
+        if abs(actual - expected_duration) > tolerance:
             print(f"    ✗ downloaded file is {actual - expected_duration:+.0f}s off — deleted")
             os.remove(output_mp3)
             return None
@@ -546,37 +585,50 @@ def try_candidates(candidates, track, expected_duration, out_dir, use_cookies):
     return None
 
 
-def download_track(track, expected_duration=None, out_dir=STAGING_DIR):
+def download_track(track, expected_duration=None, out_dir=STAGING_DIR, use_soundcloud=True):
     """
     Tries each source in priority order, stopping at the first verified download:
       1. exact SoundCloud   2. fuzzy SoundCloud   3. YouTube Music songs (top 5)   4. YouTube videos (top 5)
+    If nothing passes, one more try over everything seen with RELAXED_TOLERANCE (clean results only).
     Returns (success: bool, source: str | None, reason: str | None, hit_429: bool).
     source is 'SC' or 'YT' on success, None on failure.
     """
     ever_429 = False
+    seen = []
 
-    for query, label in [(f'scsearch1:"{track}"', "exact SC"), (f"scsearch1:{track}", "fuzzy SC")]:
-        print(f"  → {label}")
-        candidates, hit_429 = search_soundcloud(query)
-        ever_429 = ever_429 or hit_429
-        if try_candidates(candidates, track, expected_duration, out_dir, use_cookies=True):
-            return True, "SC", None, ever_429
+    if use_soundcloud:
+        for query, label in [(f'scsearch1:"{track}"', "exact SC"), (f"scsearch1:{track}", "fuzzy SC")]:
+            print(f"  → {label}")
+            candidates, hit_429 = search_soundcloud(query)
+            ever_429 = ever_429 or hit_429
+            seen += candidates
+            if try_candidates(candidates, track, expected_duration, out_dir, use_cookies=True):
+                return True, "SC", None, ever_429
 
     print("  → YT Music")
     for c in search_youtube_music(track):
+        seen.append(c)
         if try_candidates([c], track, expected_duration, out_dir, use_cookies=False):
             return True, "YT", None, ever_429
 
     print("  → YT search")
-    if try_candidates(search_youtube(track), track, expected_duration, out_dir, use_cookies=False):
+    candidates = search_youtube(track)
+    seen += candidates
+    if try_candidates(candidates, track, expected_duration, out_dir, use_cookies=False):
         return True, "YT", None, ever_429
+
+    if expected_duration is not None:
+        relaxed = relaxed_candidates(seen, track, expected_duration)
+        if relaxed:
+            print(f"  → second try (±{RELAXED_TOLERANCE}s, clean results only)")
+        for c in relaxed:
+            print(f"    ✓ {describe(c)}")
+            if download_candidate(c, track, expected_duration, out_dir, use_cookies=c["source"] == "sc",
+                                  tolerance=RELAXED_TOLERANCE):
+                return True, "SC" if c["source"] == "sc" else "YT", None, ever_429
 
     return False, None, "no result passed title + length checks", ever_429
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def download_all(tracks, out_dir, archive_file, failed_file, sources_file=None):
     """

@@ -234,6 +234,10 @@ Crate doesn't blindly download the first search result. Before accepting any res
 
 3. **Artist + title match ≥ 60%** (or ≥ 85% if the expected length is unknown).
 
+**Covers, tributes and altered versions are always rejected** — titles marked tribute, cover, "originally by", "in the style of", "(By Artist)", karaoke, 8D, slowed, sped up, nightcore or instrumental — unless the track you asked for is that version (e.g. a "Sped Up" track in your playlist).
+
+**Second try:** if nothing passes, Crate tries the results it already found once more with a ±10s length limit, accepting only clean results (no official video / live / visualizer / remix markers). This catches real tracks that are a few seconds off on YouTube without letting music videos back in.
+
 When several results pass, Crate prefers official audio (YouTube Music, "Artist - Topic" channels, "(Audio)") over lyric videos, and avoids titles marked official/music video, live, visualizer or remix. Every rejected result is printed with the reason. After downloading, the file's real length is checked again — if it's off, the file is deleted and the next result is tried.
 
 Each MP3's comment tag records where it came from and the original quality, e.g. `https://www.youtube.com/watch?v=… | opus 133kbps`.
@@ -276,6 +280,7 @@ TITLE_THRESHOLD    = 80   # min song-title match (artist ignored) — rejects ot
 DURATION_THRESHOLD = 60   # min artist + title match when the length matches
 VERIFY_THRESHOLD   = 85   # min artist + title match when the expected length is unknown
 DURATION_TOLERANCE = 4    # seconds — candidates further than this from the expected length are rejected
+RELAXED_TOLERANCE  = 10   # seconds — second try when nothing passes, clean results only
 SEARCH_RESULTS     = 5    # candidates checked per YouTube search
 
 # Rate limiting

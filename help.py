@@ -47,6 +47,9 @@ SYNC — how downloads work
     - song title match ≥ 80%  (artist ignored → other songs by the artist are rejected)
     - length within ±4s of Spotify/SoundCloud  (rejects music videos, live, clips)
     - artist + title match ≥ 60%  (≥ 85% if the expected length is unknown)
+  Covers, tributes and altered versions (8D, slowed, sped up, karaoke, nightcore,
+  instrumental) are always rejected, unless that's the version you asked for.
+  If nothing passes, one more try allows ±10s for clean results (no video/live).
   Rejected results are printed with the reason. Official audio is preferred over
   lyric videos. The downloaded file's length is re-checked; if off, it's deleted.
   The comment tag records the source URL and original quality.

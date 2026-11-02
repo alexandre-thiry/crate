@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from sync import pick_candidates, title_score, DURATION_TOLERANCE
+from sync import pick_candidates, relaxed_candidates, title_score, DURATION_TOLERANCE, RELAXED_TOLERANCE
 
 
 def cand(title, uploader="", duration=None, source="yt", url=None):
@@ -135,3 +135,56 @@ def test_unknown_candidate_length_rejected_when_expected_known():
 ])
 def test_title_score_matches_real_variants(track, returned):
     assert title_score(track, returned) >= 80
+
+
+@pytest.mark.parametrize("title,uploader", [
+    ("One Kiss (Tribute to Calvin Harris & Dua Lipa)", "Grant Richards - Topic"),
+    ("Pompeii (By Bastille)", "Release - Topic"),
+    ("Safe and Sound (Capital Cities Tribute)", "Brickbreaker - Topic"),
+    ("Blame (8D Audio)", "Luke Muzzic"),
+    ("monaco (sped up) - guy2bezbar", "Frenchy Bandana"),
+    ("La Rvfleuze - Serrure #5 (SLOWED)", "QUADRABZEZ"),
+    ("Payphone (Karaoke Version)", "Sing King"),
+    ("Payphone (Cover)", "Some Singer"),
+    ("Payphone - Maroon 5 cover by Jane", "Jane"),
+    ("Payphone (Originally Performed by Maroon 5)", "Hit Factory"),
+    ("Hello (128 BPM Instrumental Tribute To Martin Solveig feat Dragonette)", "Remix Kit - Topic"),
+    ("Midnight City (Nightcore)", "nc"),
+])
+def test_copies_and_altered_versions_rejected(title, uploader):
+    track = {
+        "One Kiss": "Calvin Harris - One Kiss (with Dua Lipa)", "Pompeii": "Bastille - Pompeii",
+        "Safe and Sound": "Capital Cities - Safe And Sound", "Blame": "Calvin Harris - Blame",
+        "monaco": "Guy2Bezbar - Monaco", "La Rvfleuze": "La Rvfleuze - Serrure #5",
+        "Payphone": "Maroon 5 - Payphone", "Hello": "Martin Solveig - Hello",
+        "Midnight City": "M83 - Midnight City",
+    }[next(k for k in ["One Kiss", "Pompeii", "Safe and Sound", "Blame", "monaco", "La Rvfleuze",
+                       "Payphone", "Hello", "Midnight City"] if title.startswith(k))]
+    c = cand(title, uploader, 200)
+    passing, rejected = pick_candidates([c], track, 200)
+    assert passing == []
+    assert "copy/altered" in rejected[0][1]
+
+
+def test_altered_version_allowed_when_requested():
+    c = cand("MONEY ON THE DASH (SPED UP)", "Elley Duhé", 116)
+    passing, _ = pick_candidates([c], "Elley Duhé - MONEY ON THE DASH - SPED UP", 116)
+    assert passing == [c]
+
+
+def test_cover_in_song_title_not_rejected():
+    c = cand("Cover Me", "Bruce Springsteen - Topic", 207, source="ytmusic")
+    passing, _ = pick_candidates([c], "Bruce Springsteen - Cover Me", 207)
+    assert passing == [c]
+
+
+def test_relaxed_tolerance_accepts_real_track_a_few_seconds_off():
+    real = cand("One Kiss", "Calvin Harris", 215, source="ytmusic")
+    assert pick_candidates([real], "Calvin Harris - One Kiss (with Dua Lipa)", 209)[0] == []
+    assert relaxed_candidates([real], "Calvin Harris - One Kiss (with Dua Lipa)", 209) == [real]
+
+
+def test_relaxed_skips_penalized_and_far_off_candidates():
+    video = cand("Calvin Harris, Dua Lipa - One Kiss (Official Video)", "Calvin Harris", 215)
+    far = cand("One Kiss", "Calvin Harris", 209 + RELAXED_TOLERANCE + 1, source="ytmusic")
+    assert relaxed_candidates([video, far], "Calvin Harris - One Kiss (with Dua Lipa)", 209) == []
