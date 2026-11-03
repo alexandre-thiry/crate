@@ -195,6 +195,7 @@ def test_relaxed_skips_penalized_and_far_off_candidates():
     ("La Rvfleuze - Serrure #5", "La Rvfleuze - Serrure #667 feat. Freeze Corleone"),
     ("13 Organisé - Bande Organisée", "Bande Organisée 2 - SCH / Kofs / JuL"),
     ("Gazo - Drill FR 4", "Drill FR 3"),
+    ("Gazo - Drill FR 4", "Drill FR"),
 ])
 def test_title_score_different_numbers_are_different_songs(track, returned):
     assert title_score(track, returned) < 80
