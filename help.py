@@ -49,6 +49,8 @@ SYNC — how downloads work
     - artist + title match ≥ 60%  (≥ 85% if the expected length is unknown)
   Covers, tributes and altered versions (8D, slowed, sped up, karaoke, nightcore,
   instrumental) are always rejected, unless that's the version you asked for.
+  Music videos (official video / video oficial / clip officiel / VEVO channels) are
+  always rejected — lyric videos and official audio are fine.
   If nothing passes, one more try allows ±10s for clean results (no video/live).
   Rejected results are printed with the reason. Official audio is preferred over
   lyric videos. The downloaded file's length is re-checked; if off, it's deleted.

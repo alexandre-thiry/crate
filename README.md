@@ -236,6 +236,8 @@ Crate doesn't blindly download the first search result. Before accepting any res
 
 **Covers, tributes and altered versions are always rejected** — titles marked tribute, cover, "originally by", "in the style of", "(By Artist)", karaoke, 8D, slowed, sped up, nightcore or instrumental — unless the track you asked for is that version (e.g. a "Sped Up" track in your playlist).
 
+**Music videos are always rejected** — titles marked official video, music video, video oficial, clip officiel or "(Video)", and any VEVO channel — even at the right length, because videos often add intros, outros or sound effects. Lyric videos and "(Official Audio)" uploads are fine.
+
 **Second try:** if nothing passes, Crate tries the results it already found once more with a ±10s length limit, accepting only clean results (no official video / live / visualizer / remix markers). This catches real tracks that are a few seconds off on YouTube without letting music videos back in.
 
 When several results pass, Crate prefers official audio (YouTube Music, "Artist - Topic" channels, "(Audio)") over lyric videos, and avoids titles marked official/music video, live, visualizer or remix. Every rejected result is printed with the reason. After downloading, the file's real length is checked again — if it's off, the file is deleted and the next result is tried.
