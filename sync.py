@@ -346,7 +346,25 @@ def full_score(intended_track, candidate):
     return max(scores)
 
 
-PENALTY_PATTERNS = [r"official\s+(hd\s+)?(music\s+)?video", r"music\s+video", r"\blive\b", r"visuali[sz]er", r"\bremix\b"]
+PENALTY_PATTERNS = [r"\blive\b", r"visuali[sz]er", r"\bremix\b"]
+
+# Music videos often add intros, outros or sound effects, even at the right length — always rejected.
+# Lyric videos and "(Official Audio)" are fine: they carry the studio track.
+VIDEO_PATTERNS = [
+    r"official\s+(hd\s+|4k\s+)?(music\s+)?video",
+    r"music\s+video",
+    r"v[ií]deo\s+oficial",
+    r"clip\s+officiel",
+    r"[(\[]\s*(official\s+)?video\s*[)\]]",
+]
+
+
+def is_music_video(candidate, intended_track):
+    """True for music-video uploads: video markers in the title, or a VEVO channel."""
+    title = candidate.get("title") or ""
+    if re.search(r"vevo$", (candidate.get("uploader") or "").strip(), re.I):
+        return True
+    return any(re.search(p, title, re.I) and not re.search(p, intended_track, re.I) for p in VIDEO_PATTERNS)
 
 
 def penalty(candidate, intended_track):
@@ -396,7 +414,8 @@ def pick_candidates(candidates, intended_track, expected_duration, tolerance=DUR
     Checks search results against the intended track.
     Returns (passing, rejected): passing is best-first, rejected is [(candidate, reason)].
 
-    Covers, tributes and altered versions (COPY_PATTERNS) are always rejected.
+    Covers, tributes and altered versions (COPY_PATTERNS) and music videos (VIDEO_PATTERNS, VEVO
+    channels) are always rejected.
     Otherwise a candidate passes when its song title matches ≥ TITLE_THRESHOLD and either:
       - its length is within `tolerance` of expected_duration and artist + title ≥ DURATION_THRESHOLD, or
       - the expected length is unknown and artist + title ≥ VERIFY_THRESHOLD.
@@ -410,6 +429,8 @@ def pick_candidates(candidates, intended_track, expected_duration, tolerance=DUR
         marker = copy_marker(c, intended_track)
         if marker:
             rejected.append((c, f"copy/altered: {marker}"))
+        elif is_music_video(c, intended_track):
+            rejected.append((c, "music video"))
         elif t < TITLE_THRESHOLD:
             rejected.append((c, f"title match {t}%"))
         elif expected_duration is None:

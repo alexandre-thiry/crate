@@ -44,7 +44,7 @@ def test_official_audio_beats_music_video(artist, title, expected, video_length)
     passing, rejected = pick_candidates([video, audio], f"{artist} - {title}", expected)
     assert passing == [audio]
     assert [c for c, _ in rejected] == [video]
-    assert "length" in rejected[0][1]
+    assert "music video" in rejected[0][1]
 
 
 @pytest.mark.parametrize("track,expected,short", [
@@ -79,11 +79,12 @@ def test_remix_of_original_rejected_by_title():
     assert passing == []
 
 
-def test_penalized_video_loses_to_lyric_video_at_same_length():
+def test_music_video_rejected_even_at_exact_length():
     video = cand("Pitbull - Timber (Official Video)", "Pitbull", 204)
     lyrics = cand("Pitbull - Timber (Lyrics) ft. Ke$ha", "7clouds", 203)
-    passing, _ = pick_candidates([video, lyrics], "Pitbull - Timber", 204)
-    assert passing == [lyrics, video]
+    passing, rejected = pick_candidates([video, lyrics], "Pitbull - Timber", 204)
+    assert passing == [lyrics]
+    assert rejected[0][1] == "music video"
 
 
 def test_topic_preferred_over_lyric_video():
@@ -115,7 +116,7 @@ def test_live_in_song_title_not_penalized():
 
 
 def test_unknown_expected_length_falls_back_to_strict_title_match():
-    good = cand("Maroon 5 - Payphone (Official Music Video)", "Maroon 5", 279)
+    good = cand("Maroon 5 - Payphone", "Maroon 5", 279)
     passing, _ = pick_candidates([good], "Maroon 5 - Payphone", None)
     assert passing == [good]
 
@@ -210,3 +211,33 @@ def test_title_score_different_numbers_are_different_songs(track, returned):
 ])
 def test_title_score_same_numbers_still_match(track, returned):
     assert title_score(track, returned) >= 80
+
+
+@pytest.mark.parametrize("title,uploader", [
+    ("Maroon 5 - Payphone (Official Music Video)", "Maroon 5"),
+    ("Maroon 5 - Payphone [Official Video]", "Maroon 5"),
+    ("Maroon 5 - Payphone (Official 4K Video)", "Maroon 5"),
+    ("Maroon 5 - Payphone (Official HD Video)", "Maroon 5"),
+    ("Maroon 5 - Payphone (Video)", "Maroon 5"),
+    ("Maroon 5 - Payphone | Music Video", "Maroon 5"),
+    ("Maroon 5 - Payphone (Video Oficial)", "Maroon 5"),
+    ("Maroon 5 - Payphone (Vídeo Oficial)", "Maroon 5"),
+    ("Maroon 5 - Payphone (Clip Officiel)", "Maroon 5"),
+    ("Maroon 5 - Payphone", "Maroon5VEVO"),
+])
+def test_music_videos_rejected(title, uploader):
+    passing, rejected = pick_candidates([cand(title, uploader, 231)], "Maroon 5 - Payphone", 231)
+    assert passing == []
+    assert rejected[0][1] == "music video"
+
+
+@pytest.mark.parametrize("title", [
+    "Maroon 5 - Payphone (Lyric Video)",
+    "Maroon 5 - Payphone (Official Lyric Video)",
+    "Maroon 5 - Payphone (Official Audio)",
+    "Maroon 5 - Payphone (Visualizer)",
+    "Payphone",
+])
+def test_non_video_uploads_still_pass(title):
+    passing, _ = pick_candidates([cand(title, "Maroon 5", 231)], "Maroon 5 - Payphone", 231)
+    assert len(passing) == 1
