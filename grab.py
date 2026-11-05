@@ -6,7 +6,9 @@ Downloads any Spotify or SoundCloud playlist from a link into
 Re-running the same link only downloads tracks added since last time.
 
 Usage:
-  crate grab <spotify or soundcloud playlist link>
+  crate grab <spotify or soundcloud playlist link> [--no-sc]
+  --no-sc  skip SoundCloud and go straight to YouTube Music / YouTube (best for mainstream
+           playlists, where SoundCloud mostly has DRM blocks and re-uploads)
 """
 
 import os
@@ -55,6 +57,15 @@ def playlist_dir(kind, playlist_name):
     return os.path.join(GRAB_DIR, SOURCE_FOLDERS[kind], name) if name else None
 
 
+def parse_args(args):
+    """Returns (link, no_sc) or None if the arguments don't make sense."""
+    flags = [a for a in args if a.startswith("--")]
+    links = [a for a in args if not a.startswith("--")]
+    if len(links) != 1 or any(f != "--no-sc" for f in flags):
+        return None
+    return links[0], "--no-sc" in flags
+
+
 def spotify_playlist_name(config, playlist_id):
     try:
         return get_spotify(config).playlist(playlist_id, fields="name")["name"]
@@ -75,11 +86,13 @@ def soundcloud_playlist_name(url):
 
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: crate grab <spotify or soundcloud playlist link>")
+    parsed = parse_args(sys.argv[1:])
+    if not parsed:
+        print("Usage: crate grab <spotify or soundcloud playlist link> [--no-sc]")
         sys.exit(1)
+    raw_link, no_sc = parsed
 
-    link = parse_link(sys.argv[1])
+    link = parse_link(raw_link)
     if not link:
         print("ERROR: not a Spotify or SoundCloud playlist link.")
         sys.exit(1)
@@ -109,21 +122,22 @@ def main():
         tracks = fetch_soundcloud_tracks(ref)
     # Same track listed twice in a playlist → download once
     unique = {}
-    for t, d in tracks:
-        unique.setdefault(t, d)
-    tracks = list(unique.items())
+    for item in tracks:
+        unique.setdefault(item[0], item)
+    tracks = list(unique.values())
     print(f"  {len(tracks)} tracks found")
     if not tracks:
         print("Nothing to download.")
         return
 
     archive = load_archive(archive_file)
-    new_tracks = [(t, d) for t, d in tracks if t not in archive]
+    new_tracks = [item for item in tracks if item[0] not in archive]
     skipped_count = len(tracks) - len(new_tracks)
-    print(f"  {skipped_count} already downloaded, {len(new_tracks)} to download\n")
+    print(f"  {skipped_count} already downloaded, {len(new_tracks)} to download"
+          f"{' (SoundCloud skipped)' if no_sc else ''}\n")
 
     downloaded_count, sc_count, yt_count, failed_count = download_all(
-        new_tracks, out_dir, archive_file, failed_file)
+        new_tracks, out_dir, archive_file, failed_file, use_soundcloud=not no_sc)
 
     print(f"\nDone. {downloaded_count} downloaded ({sc_count} from SC, {yt_count} from YT), "
           f"{skipped_count} skipped, {failed_count} failed.")

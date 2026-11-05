@@ -241,3 +241,56 @@ def test_music_videos_rejected(title, uploader):
 def test_non_video_uploads_still_pass(title):
     passing, _ = pick_candidates([cand(title, "Maroon 5", 231)], "Maroon 5 - Payphone", 231)
     assert len(passing) == 1
+
+
+def test_deduplicate_keeps_spotify_cover_url():
+    from sync import deduplicate_tracks
+    sp = [("Maroon 5 - Payphone", 231, "https://i.scdn.co/image/abc")]
+    sc = [("Someone - Other Song", 200)]
+    merged = deduplicate_tracks(sp, sc)
+    assert ("Maroon 5 - Payphone", 231, "https://i.scdn.co/image/abc") in merged
+    assert ("Someone - Other Song", 200) in merged
+
+
+def test_embed_cover_replaces_artwork(tmp_path):
+    import subprocess
+    from mutagen.id3 import ID3, APIC
+    from sync import embed_cover
+    mp3 = tmp_path / "t.mp3"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "1",
+                    "-q:a", "9", str(mp3)], check=True)
+    tags = ID3()
+    tags.add(APIC(encoding=3, mime="image/png", type=3, desc="old", data=b"\x89PNGold"))
+    tags.save(mp3)
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"\xff\xd8\xff\xe0fakejpeg")
+    assert embed_cover(str(mp3), cover.as_uri())
+    apics = ID3(mp3).getall("APIC")
+    assert len(apics) == 1 and apics[0].mime == "image/jpeg" and apics[0].data == b"\xff\xd8\xff\xe0fakejpeg"
+
+
+def test_embed_cover_keeps_existing_art_on_failure(tmp_path):
+    import subprocess
+    from mutagen.id3 import ID3, APIC
+    from sync import embed_cover
+    mp3 = tmp_path / "t.mp3"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "1",
+                    "-q:a", "9", str(mp3)], check=True)
+    tags = ID3()
+    tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="yt", data=b"\xff\xd8yt"))
+    tags.save(mp3)
+    assert not embed_cover(str(mp3), (tmp_path / "missing.jpg").as_uri())
+    assert ID3(mp3).getall("APIC")[0].data == b"\xff\xd8yt"
+
+
+@pytest.mark.parametrize("album_type,expected", [("album", "big"), ("single", "big"), ("compilation", None)])
+def test_spotify_cover_skips_compilations(album_type, expected):
+    from sync import spotify_cover
+    track = {"album": {"album_type": album_type, "images": [{"url": "big"}, {"url": "small"}]}}
+    assert spotify_cover(track) == expected
+
+
+def test_spotify_cover_handles_missing_images():
+    from sync import spotify_cover
+    assert spotify_cover({"album": {"album_type": "album", "images": []}}) is None
+    assert spotify_cover({}) is None

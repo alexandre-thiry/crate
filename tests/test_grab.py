@@ -64,3 +64,21 @@ def test_playlist_dir_rejects_empty_name():
 
 def test_grab_dir_location():
     assert GRAB_DIR == os.path.expanduser("~/Desktop/Music/Downloaded Playlists")
+
+
+def test_parse_args_link_only():
+    from grab import parse_args
+    assert parse_args(["https://open.spotify.com/playlist/abc"]) == ("https://open.spotify.com/playlist/abc", False)
+
+
+def test_parse_args_no_sc_either_position():
+    from grab import parse_args
+    assert parse_args(["--no-sc", "https://x"]) == ("https://x", True)
+    assert parse_args(["https://x", "--no-sc"]) == ("https://x", True)
+
+
+def test_parse_args_rejects_bad_input():
+    from grab import parse_args
+    assert parse_args([]) is None
+    assert parse_args(["a", "b"]) is None
+    assert parse_args(["https://x", "--nope"]) is None
