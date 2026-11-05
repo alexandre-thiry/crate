@@ -18,6 +18,8 @@ COMMANDS
                        ~/Desktop/Music/Downloaded Playlists/<Spotify|SoundCloud>/<Playlist Name>/
                        (same search order as sync; re-run the link to fetch only new tracks)
                        --no-sc skips SoundCloud (best for mainstream playlists)
+                       Each folder keeps a hidden .crate-archive.txt — move the MP3s
+                       anywhere, but leave that file or the playlist re-downloads.
   crate analyze    score every track in _staging/ for energy (0–100) → analysis.csv
   crate sort       preview where each track goes → writes sort_overrides.txt
   crate sort --apply   move tracks into house/peak, house/warm up, house/closing
@@ -26,10 +28,16 @@ COMMANDS
   crate help       this page
 
 TYPICAL WORKFLOW
-  1. crate run
-  2. At "Apply sort?", answer y — or n to open sort_overrides.txt, edit it,
-     then run: crate sort --apply
-  3. Import the house/ folders into rekordbox
+  House (your Spotify + SoundCloud master playlists):
+    1. crate sync              → new tracks land in _staging/
+    2. sort them by hand into your House genre folders, import into rekordbox
+  Any other playlist:
+    crate grab <link> --no-sc  → Downloaded Playlists/Spotify/<name>/, move into
+                                 your folders, import into rekordbox
+
+  Energy sort (crate run / crate sort --apply) still moves tracks into
+  house/peak, house/warm up, house/closing — answer n at "Apply sort?" if your
+  House folder is organised by genre.
 
 
 ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +131,7 @@ RENAME — fix filenames
 ─────────────────────────────────────────────────────────────────────────────
   For tracks you added by hand. Reads ID3 tags and renames to
   "Track Name - Artist.ext". Dry run by default; crate rename --apply to do it.
+  Only looks in ~/Desktop/Music/house/ — not Classics or Downloaded Playlists.
 
 
 ─────────────────────────────────────────────────────────────────────────────
