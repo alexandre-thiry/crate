@@ -166,6 +166,8 @@ venv/bin/python grab.py <spotify or soundcloud playlist link>
 
 Downloads a playlist that isn't your master playlist (a friend's, a genre outside house, etc.) into `~/Desktop/Music/Downloaded Playlists/<Spotify|SoundCloud>/<Playlist Name>/`. Same search order, verification, 320kbps MP3s, naming and tags as sync. Each folder keeps its own hidden `.crate-archive.txt`, so re-running the link only fetches new tracks, and a `failed.txt` for tracks that couldn't be found. These tracks don't touch `archive.txt` and don't go through analyze or sort.
 
+Add `--no-sc` to skip SoundCloud and go straight to YouTube Music / YouTube — best for mainstream playlists, where official releases are DRM-blocked on SoundCloud and what's left is mostly re-uploads.
+
 You can drag the downloaded MP3s anywhere — just leave the hidden `.crate-archive.txt` in place, or the next run re-downloads the whole playlist.
 
 Spotify can only read your own playlists, ones you follow, and public ones.
@@ -241,6 +243,8 @@ Crate doesn't blindly download the first search result. Before accepting any res
 **Second try:** if nothing passes, Crate tries the results it already found once more with a ±10s length limit, accepting only clean results (no official video / live / visualizer / remix markers). This catches real tracks that are a few seconds off on YouTube without letting music videos back in.
 
 When several results pass, Crate prefers official audio (YouTube Music, "Artist - Topic" channels, "(Audio)") over lyric videos, and avoids titles marked official/music video, live, visualizer or remix. Every rejected result is printed with the reason. After downloading, the file's real length is checked again — if it's off, the file is deleted and the next result is tried.
+
+**Cover art** is always square so it renders in rekordbox. Tracks from a Spotify playlist get Spotify's official album cover (640×640); compilations keep the source's artwork instead, since a compilation cover isn't the song's own. Everything else gets the YouTube/SoundCloud artwork cropped to a square.
 
 Each MP3's comment tag records where it came from and the original quality, e.g. `https://www.youtube.com/watch?v=… | opus 133kbps`.
 

@@ -14,9 +14,10 @@ CRATE — quick reference
 COMMANDS
   crate run        full pipeline: yt-dlp check → sync → analyze → sort preview → apply? [y/n]
   crate sync       download new tracks from Spotify + SoundCloud → ~/Desktop/Music/_staging/
-  crate grab <link>    download any Spotify/SoundCloud playlist →
+  crate grab <link> [--no-sc]   download any Spotify/SoundCloud playlist →
                        ~/Desktop/Music/Downloaded Playlists/<Spotify|SoundCloud>/<Playlist Name>/
                        (same search order as sync; re-run the link to fetch only new tracks)
+                       --no-sc skips SoundCloud (best for mainstream playlists)
   crate analyze    score every track in _staging/ for energy (0–100) → analysis.csv
   crate sort       preview where each track goes → writes sort_overrides.txt
   crate sort --apply   move tracks into house/peak, house/warm up, house/closing
@@ -56,7 +57,8 @@ SYNC — how downloads work
   lyric videos. The downloaded file's length is re-checked; if off, it's deleted.
   The comment tag records the source URL and original quality.
 
-  Output: 320kbps MP3 named "Track Name - Artist.mp3", tagged, with cover art.
+  Output: 320kbps MP3 named "Track Name - Artist.mp3", tagged, with square cover art
+  (Spotify's official album cover when the track comes from Spotify, else the source's).
 
   Quality
     Every file is 320kbps, but real quality depends on the source.

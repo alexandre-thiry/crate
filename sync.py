@@ -11,9 +11,10 @@ import sys
 import time
 
 from dotenv import load_dotenv
-from mutagen.id3 import ID3, TIT2, TPE1, TPE2, COMM, ID3NoHeaderError, TALB
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, COMM, APIC, ID3NoHeaderError, TALB
 from mutagen.mp3 import MP3
 from urllib.parse import quote
+from urllib.request import urlopen
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth, SpotifyOauthError
 import yt_dlp
@@ -89,6 +90,16 @@ def get_spotify(config):
     return spotipy.Spotify(auth_manager=auth)
 
 
+def spotify_cover(track):
+    """Official square cover (largest image, usually 640x640) of the track's album or single.
+    None for compilations — their art isn't the song's own cover, so the YouTube/SC artwork is kept."""
+    album = track.get("album") or {}
+    images = album.get("images") or []
+    if not images or album.get("album_type") == "compilation":
+        return None
+    return images[0]["url"]
+
+
 def fetch_spotify_tracks(config, playlist_id):
     # Any Spotify failure stops the run — continuing would silently skip every Spotify track
     try:
@@ -120,7 +131,7 @@ def fetch_spotify_tracks(config, playlist_id):
             duration_ms = track.get("duration_ms")
             duration = round(duration_ms / 1000) if duration_ms else None
             if artist and title:
-                tracks.append((f"{artist} - {title}", duration))
+                tracks.append((f"{artist} - {title}", duration, spotify_cover(track)))
             else:
                 print(f"    WARNING: missing artist or title — artist={artist!r} title={title!r}")
         results = sp.next(results) if results.get("next") else None
@@ -211,20 +222,21 @@ def fetch_soundcloud_tracks(url):
 
 def deduplicate_tracks(spotify_tracks, sc_tracks):
     """
-    Both inputs are lists of (track_str, duration) tuples.
+    Inputs are lists of (track_str, duration[, cover_url]) tuples.
     SC tracks are preferred; Spotify tracks are added only if no duplicate found.
-    Returns a deduplicated list of (track_str, duration) tuples.
+    Returns a deduplicated list of the same tuples.
     """
     merged = list(sc_tracks)
     merged_strs = [t[0] for t in merged]
 
-    for sp_track, sp_dur in spotify_tracks:
+    for item in spotify_tracks:
+        sp_track = item[0]
         is_dup = any(
             fuzz.ratio(sp_track.lower(), existing.lower()) >= DEDUP_THRESHOLD
             for existing in merged_strs
         )
         if not is_dup:
-            merged.append((sp_track, sp_dur))
+            merged.append(item)
             merged_strs.append(sp_track)
 
     return merged
@@ -541,12 +553,29 @@ def search_youtube_music(track):
                 continue
 
 
+def embed_cover(filepath, cover_url):
+    """Replace the embedded artwork with the image at cover_url (Spotify's official square cover).
+    Returns False and keeps the existing artwork if the image can't be fetched."""
+    try:
+        data = urlopen(cover_url, timeout=15).read()
+        mime = "image/png" if data[:4] == b"\x89PNG" else "image/jpeg"
+        tags = ID3(filepath)
+        tags.delall("APIC")
+        tags.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=data))
+        tags.save(filepath)
+        return True
+    except Exception as e:
+        print(f"    WARNING: could not use Spotify cover, keeping YouTube/SC artwork: {e}")
+        return False
+
+
 def download_candidate(candidate, intended_track, expected_duration, out_dir, use_cookies,
-                       tolerance=DURATION_TOLERANCE):
+                       tolerance=DURATION_TOLERANCE, cover_url=None):
     """
     Downloads one verified candidate to out_dir as 'Title - Artist.mp3' (320kbps, tagged, cover art,
     source URL + original codec/bitrate in the comment tag).
     Deletes the file and returns None if its real length is off by more than `tolerance`.
+    If cover_url is given (Spotify album art), it replaces the YouTube/SC thumbnail.
     """
     artist, title = split_artist_title(intended_track)
     safe_name = sanitize_filename(f"{title} - {artist}") if title else sanitize_filename(intended_track)
@@ -598,10 +627,12 @@ def download_candidate(candidate, intended_track, expected_duration, out_dir, us
     abr = info.get("abr")
     source = f"{info.get('webpage_url') or candidate['url']} | {info.get('acodec') or '?'} {round(abr) if abr else '?'}kbps"
     write_tags(output_mp3, artist, title or intended_track, comment=source)
+    if cover_url:
+        embed_cover(output_mp3, cover_url)
     return output_mp3
 
 
-def try_candidates(candidates, track, expected_duration, out_dir, use_cookies):
+def try_candidates(candidates, track, expected_duration, out_dir, use_cookies, cover_url=None):
     """Verifies candidates, logs every rejection, downloads the best passing one.
     Falls through to the next passing candidate if a download fails its length check."""
     passing, rejected = pick_candidates(candidates, track, expected_duration)
@@ -609,13 +640,13 @@ def try_candidates(candidates, track, expected_duration, out_dir, use_cookies):
         print(f"    ✗ {describe(c)} — {reason}")
     for c in passing:
         print(f"    ✓ {describe(c)}")
-        path = download_candidate(c, track, expected_duration, out_dir, use_cookies)
+        path = download_candidate(c, track, expected_duration, out_dir, use_cookies, cover_url=cover_url)
         if path:
             return path
     return None
 
 
-def download_track(track, expected_duration=None, out_dir=STAGING_DIR, use_soundcloud=True):
+def download_track(track, expected_duration=None, out_dir=STAGING_DIR, use_soundcloud=True, cover_url=None):
     """
     Tries each source in priority order, stopping at the first verified download:
       1. exact SoundCloud   2. fuzzy SoundCloud   3. YouTube Music songs (top 5)   4. YouTube videos (top 5)
@@ -632,19 +663,19 @@ def download_track(track, expected_duration=None, out_dir=STAGING_DIR, use_sound
             candidates, hit_429 = search_soundcloud(query)
             ever_429 = ever_429 or hit_429
             seen += candidates
-            if try_candidates(candidates, track, expected_duration, out_dir, use_cookies=True):
+            if try_candidates(candidates, track, expected_duration, out_dir, use_cookies=True, cover_url=cover_url):
                 return True, "SC", None, ever_429
 
     print("  → YT Music")
     for c in search_youtube_music(track):
         seen.append(c)
-        if try_candidates([c], track, expected_duration, out_dir, use_cookies=False):
+        if try_candidates([c], track, expected_duration, out_dir, use_cookies=False, cover_url=cover_url):
             return True, "YT", None, ever_429
 
     print("  → YT search")
     candidates = search_youtube(track)
     seen += candidates
-    if try_candidates(candidates, track, expected_duration, out_dir, use_cookies=False):
+    if try_candidates(candidates, track, expected_duration, out_dir, use_cookies=False, cover_url=cover_url):
         return True, "YT", None, ever_429
 
     if expected_duration is not None:
@@ -654,15 +685,15 @@ def download_track(track, expected_duration=None, out_dir=STAGING_DIR, use_sound
         for c in relaxed:
             print(f"    ✓ {describe(c)}")
             if download_candidate(c, track, expected_duration, out_dir, use_cookies=c["source"] == "sc",
-                                  tolerance=RELAXED_TOLERANCE):
+                                  tolerance=RELAXED_TOLERANCE, cover_url=cover_url):
                 return True, "SC" if c["source"] == "sc" else "YT", None, ever_429
 
     return False, None, "no result passed title + length checks", ever_429
 
 
-def download_all(tracks, out_dir, archive_file, failed_file, sources_file=None):
+def download_all(tracks, out_dir, archive_file, failed_file, sources_file=None, use_soundcloud=True):
     """
-    Downloads each (track, duration) into out_dir, logging successes to archive_file
+    Downloads each (track, duration[, cover_url]) into out_dir, logging successes to archive_file
     (and sources_file if given) and failures to failed_file.
     Returns (downloaded, sc_count, yt_count, failed_count).
     """
@@ -673,11 +704,13 @@ def download_all(tracks, out_dir, archive_file, failed_file, sources_file=None):
     yt_count = 0
     current_delay = TRACK_DELAY
 
-    for i, (track, duration) in enumerate(tracks, 1):
+    for i, (track, duration, *extra) in enumerate(tracks, 1):
+        cover_url = extra[0] if extra else None
         if i > 1:
             time.sleep(current_delay)
         print(f"[{i}/{len(tracks)}] {track}")
-        success, source, reason, hit_429 = download_track(track, expected_duration=duration, out_dir=out_dir)
+        success, source, reason, hit_429 = download_track(track, expected_duration=duration, out_dir=out_dir,
+                                                          use_soundcloud=use_soundcloud, cover_url=cover_url)
 
         if hit_429 and current_delay < TRACK_DELAY_AFTER_429:
             current_delay = TRACK_DELAY_AFTER_429
@@ -724,7 +757,7 @@ def main():
     print(f"  {len(all_tracks)} unique tracks total")
 
     archive = load_archive()
-    new_tracks = [(t, d) for t, d in all_tracks if t not in archive]
+    new_tracks = [item for item in all_tracks if item[0] not in archive]
     skipped_count = len(all_tracks) - len(new_tracks)
     print(f"  {skipped_count} already in archive, {len(new_tracks)} to download\n")
 
