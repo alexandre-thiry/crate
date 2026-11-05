@@ -7,6 +7,7 @@ and downloads new tracks to ~/Desktop/Music/_staging/
 
 import os
 import re
+import subprocess
 import sys
 import time
 
@@ -558,10 +559,14 @@ def embed_cover(filepath, cover_url):
     Returns False and keeps the existing artwork if the image can't be fetched."""
     try:
         data = urlopen(cover_url, timeout=15).read()
-        mime = "image/png" if data[:4] == b"\x89PNG" else "image/jpeg"
+        # Some Spotify art is slightly off-square (e.g. 640x575) — crop the centre square, as JPEG
+        data = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", "pipe:0", "-vf", "crop='min(iw,ih)':'min(iw,ih)'",
+             "-frames:v", "1", "-f", "mjpeg", "pipe:1"],
+            input=data, capture_output=True, check=True).stdout
         tags = ID3(filepath)
         tags.delall("APIC")
-        tags.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=data))
+        tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=data))
         tags.save(filepath)
         return True
     except Exception as e:

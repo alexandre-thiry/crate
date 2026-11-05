@@ -263,10 +263,17 @@ def test_embed_cover_replaces_artwork(tmp_path):
     tags.add(APIC(encoding=3, mime="image/png", type=3, desc="old", data=b"\x89PNGold"))
     tags.save(mp3)
     cover = tmp_path / "cover.jpg"
-    cover.write_bytes(b"\xff\xd8\xff\xe0fakejpeg")
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=red:s=640x575", "-frames:v", "1",
+                    str(cover)], check=True)  # Spotify art is sometimes slightly off-square
     assert embed_cover(str(mp3), cover.as_uri())
     apics = ID3(mp3).getall("APIC")
-    assert len(apics) == 1 and apics[0].mime == "image/jpeg" and apics[0].data == b"\xff\xd8\xff\xe0fakejpeg"
+    assert len(apics) == 1 and apics[0].mime == "image/jpeg"
+    out = tmp_path / "out.jpg"
+    out.write_bytes(apics[0].data)
+    wh = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", str(out)],
+                        capture_output=True, text=True).stdout.strip()
+    w, h = wh.split(",")
+    assert w == h and int(w) >= 574  # square (JPEG may round odd sizes down to even)
 
 
 def test_embed_cover_keeps_existing_art_on_failure(tmp_path):
